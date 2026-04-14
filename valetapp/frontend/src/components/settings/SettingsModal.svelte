@@ -1,0 +1,151 @@
+<script>
+  import { getSettings, setSetting } from '../../lib/stores/settings.svelte.js';
+  import { themes, fonts } from '../../lib/themes.js';
+
+  let { open = $bindable(false) } = $props();
+
+  const settings = $derived(getSettings());
+
+  function close() { open = false; }
+</script>
+
+{#if open}
+  <div class="overlay" onclick={close} role="presentation">
+    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1" onkeydown={(e) => e.key === 'Escape' && close()}>
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button class="close-btn" onclick={close}>&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <nav class="tabs">
+          <button class="active">Appearance</button>
+        </nav>
+
+        <div class="tab-content">
+          <div class="section">
+            <h3>Theme</h3>
+            <div class="theme-grid">
+              {#each Object.entries(themes) as [id, theme] (id)}
+                <button
+                  class="theme-card"
+                  class:active={(settings.theme || 'macos') === id}
+                  onclick={() => setSetting('theme', id)}
+                >
+                  <div class="theme-preview" style="background: {theme.vars['--bg-primary']}; border-color: {theme.vars['--border']}">
+                    <div class="preview-sidebar" style="background: {theme.vars['--bg-secondary']}"></div>
+                    <div class="preview-content">
+                      <div class="preview-bubble" style="background: {theme.vars['--user-bubble-bg']}"></div>
+                      <div class="preview-bubble reply" style="background: {theme.vars['--assistant-bubble-bg']}"></div>
+                    </div>
+                  </div>
+                  <span class="theme-name">{theme.name}</span>
+                </button>
+              {/each}
+            </div>
+
+            <h3>Font</h3>
+            <div class="font-options">
+              {#each Object.entries(fonts) as [id, font] (id)}
+                <button
+                  class="font-option"
+                  class:active={(settings.font || 'system') === id}
+                  onclick={() => setSetting('font', id)}
+                >
+                  <span style="font-family: {font.value}">{font.name}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<style>
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    backdrop-filter: blur(4px);
+  }
+
+  .modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    width: min(640px, 90vw);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-header h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+  .close-btn {
+    background: none; border: none; color: var(--text-muted);
+    font-size: 1.5rem; cursor: pointer; padding: 0; line-height: 1;
+  }
+  .close-btn:hover { color: var(--text-primary); }
+
+  .modal-body { display: flex; flex-direction: column; overflow: hidden; }
+
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 0 1.5rem;
+  }
+  .tabs button {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--text-muted); padding: 0.75rem 1rem; cursor: pointer;
+    font-size: 0.85rem; font-weight: 500; font-family: var(--font-sans);
+  }
+  .tabs button:hover { color: var(--text-primary); }
+  .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-content {
+    padding: 1.25rem 1.5rem;
+    overflow-y: auto;
+    max-height: 55vh;
+  }
+
+  .section h3 { margin: 0 0 0.75rem; font-size: 0.95rem; font-weight: 600; color: var(--text-primary); }
+
+  .theme-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-bottom: 1.5rem; }
+  .theme-card {
+    background: none; border: 2px solid var(--border); border-radius: var(--radius-sm);
+    padding: 0.5rem; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 0.4rem;
+  }
+  .theme-card:hover { border-color: var(--text-muted); }
+  .theme-card.active { border-color: var(--accent); }
+  .theme-preview {
+    width: 100%; aspect-ratio: 16/10; border-radius: 4px; border: 1px solid;
+    display: flex; overflow: hidden;
+  }
+  .preview-sidebar { width: 30%; }
+  .preview-content { flex: 1; padding: 8%; display: flex; flex-direction: column; gap: 6%; }
+  .preview-bubble { height: 20%; border-radius: 3px; width: 70%; align-self: flex-end; }
+  .preview-bubble.reply { width: 80%; align-self: flex-start; }
+  .theme-name { font-size: 0.75rem; color: var(--text-secondary); }
+
+  .font-options { display: flex; gap: 0.5rem; }
+  .font-option {
+    background: var(--bg-tertiary); border: 2px solid var(--border); border-radius: var(--radius-sm);
+    padding: 0.5rem 1rem; cursor: pointer; color: var(--text-primary); font-size: 0.85rem;
+  }
+  .font-option:hover { border-color: var(--text-muted); }
+  .font-option.active { border-color: var(--accent); }
+</style>
