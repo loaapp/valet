@@ -9,59 +9,9 @@ import (
 	"time"
 
 	mdns "github.com/miekg/dns"
+
+	"github.com/loaapp/valet/valetd/internal/logstore"
 )
-
-// QueryLog represents a single DNS query event.
-type QueryLog struct {
-	Timestamp float64 `json:"ts"`
-	Domain    string  `json:"domain"`
-	Type      string  `json:"type"`   // "A", "AAAA", etc.
-	Action    string  `json:"action"` // "local", "forwarded"
-	Result    string  `json:"result"` // "127.0.0.1", upstream IP, or "error"
-}
-
-// QueryBuffer is a ring buffer for DNS query logs.
-type QueryBuffer struct {
-	mu      sync.RWMutex
-	entries []QueryLog
-	size    int
-	head    int
-	count   int
-}
-
-func NewQueryBuffer(size int) *QueryBuffer {
-	return &QueryBuffer{
-		entries: make([]QueryLog, size),
-		size:    size,
-	}
-}
-
-func (b *QueryBuffer) Push(entry QueryLog) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.entries[b.head] = entry
-	b.head = (b.head + 1) % b.size
-	if b.count < b.size {
-		b.count++
-	}
-}
-
-func (b *QueryBuffer) Last(n int) []QueryLog {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	if n > b.count {
-		n = b.count
-	}
-	if n == 0 {
-		return []QueryLog{}
-	}
-	result := make([]QueryLog, n)
-	start := (b.head - n + b.size) % b.size
-	for i := 0; i < n; i++ {
-		result[i] = b.entries[(start+i)%b.size]
-	}
-	return result
-}
 
 // Server is an embedded DNS server that resolves known route domains to 127.0.0.1
 // and forwards all other queries to upstream DNS.
@@ -71,23 +21,22 @@ type Server struct {
 	entries map[string]string  // dns_entries: domain → target (IP or hostname)
 	tlds    map[string]bool   // managed TLDs for wildcard resolution
 
-	queryLog  *QueryBuffer
+	logStore  *logstore.Store
 	udpServer *mdns.Server
 	tcpServer *mdns.Server
 }
 
 func NewServer() *Server {
 	return &Server{
-		domains:  make(map[string]bool),
-		entries:  make(map[string]string),
-		tlds:     make(map[string]bool),
-		queryLog: NewQueryBuffer(5000),
+		domains: make(map[string]bool),
+		entries: make(map[string]string),
+		tlds:    make(map[string]bool),
 	}
 }
 
-// QueryLogs returns the DNS query log buffer.
-func (s *Server) QueryLogs() *QueryBuffer {
-	return s.queryLog
+// SetLogStore sets the log store for persisting DNS query logs.
+func (s *Server) SetLogStore(store *logstore.Store) {
+	s.logStore = store
 }
 
 // SetTLDs replaces the set of managed TLDs (wildcard: all *.tld → 127.0.0.1).
@@ -238,13 +187,15 @@ func (s *Server) handleDNS(w mdns.ResponseWriter, r *mdns.Msg) {
 						Target: cnameTarget,
 					})
 				}
-				s.queryLog.Push(QueryLog{
-					Timestamp: float64(time.Now().UnixMilli()) / 1000.0,
-					Domain:    clean,
-					Type:      qtype,
-					Action:    "local",
-					Result:    target,
-				})
+				if s.logStore != nil {
+					s.logStore.PushDNS(logstore.DNSLogEntry{
+						Timestamp: float64(time.Now().UnixMilli()) / 1000.0,
+						Domain:    clean,
+						Type:      qtype,
+						Action:    "local",
+						Result:    target,
+					})
+				}
 			} else {
 				// Forward and log
 				result := s.forwardAndLog(w, r, clean, qtype)
@@ -275,13 +226,15 @@ func (s *Server) forwardAndLog(w mdns.ResponseWriter, r *mdns.Msg, domain, qtype
 		m := new(mdns.Msg)
 		m.SetRcode(r, mdns.RcodeServerFailure)
 		w.WriteMsg(m)
-		s.queryLog.Push(QueryLog{
-			Timestamp: float64(time.Now().UnixMilli()) / 1000.0,
-			Domain:    domain,
-			Type:      qtype,
-			Action:    "forwarded",
-			Result:    "error: " + err.Error(),
-		})
+		if s.logStore != nil {
+			s.logStore.PushDNS(logstore.DNSLogEntry{
+				Timestamp: float64(time.Now().UnixMilli()) / 1000.0,
+				Domain:    domain,
+				Type:      qtype,
+				Action:    "forwarded",
+				Result:    "error: " + err.Error(),
+			})
+		}
 		return "sent"
 	}
 
@@ -298,13 +251,15 @@ func (s *Server) forwardAndLog(w mdns.ResponseWriter, r *mdns.Msg, domain, qtype
 		}
 	}
 
-	s.queryLog.Push(QueryLog{
-		Timestamp: float64(time.Now().UnixMilli()) / 1000.0,
-		Domain:    domain,
-		Type:      qtype,
-		Action:    "forwarded",
-		Result:    result,
-	})
+	if s.logStore != nil {
+		s.logStore.PushDNS(logstore.DNSLogEntry{
+			Timestamp: float64(time.Now().UnixMilli()) / 1000.0,
+			Domain:    domain,
+			Type:      qtype,
+			Action:    "forwarded",
+			Result:    result,
+		})
+	}
 
 	w.WriteMsg(resp)
 	return "sent"

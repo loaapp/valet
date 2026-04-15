@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/loaapp/valet/valetd/internal/logstore"
 )
 
 // caddyLogRaw matches Caddy's JSON access log structure.
@@ -26,18 +28,18 @@ type caddyLogRaw struct {
 	} `json:"request"`
 }
 
-// Tailer watches an access log file and pushes parsed entries into a RingBuffer.
+// Tailer watches an access log file and pushes parsed entries into a logstore.Store.
 type Tailer struct {
 	path   string
-	buf    *RingBuffer
+	store  *logstore.Store
 	stopCh chan struct{}
 }
 
 // NewTailer creates a new log file tailer.
-func NewTailer(path string, buf *RingBuffer) *Tailer {
+func NewTailer(path string, store *logstore.Store) *Tailer {
 	return &Tailer{
 		path:   path,
-		buf:    buf,
+		store:  store,
 		stopCh: make(chan struct{}),
 	}
 }
@@ -117,9 +119,8 @@ func (t *Tailer) tail(f *os.File) {
 			continue
 		}
 
-		entry := LogEntry{
+		entry := logstore.HTTPLogEntry{
 			Timestamp:  raw.Ts,
-			Level:      raw.Level,
 			Host:       raw.Request.Host,
 			Method:     raw.Request.Method,
 			URI:        raw.Request.URI,
@@ -128,6 +129,8 @@ func (t *Tailer) tail(f *os.File) {
 			Size:       raw.Size,
 			RemoteAddr: raw.Request.RemoteIP,
 		}
-		t.buf.Push(entry)
+		if err := t.store.PushHTTP(entry); err != nil {
+			log.Printf("logbuf: store push error: %v", err)
+		}
 	}
 }

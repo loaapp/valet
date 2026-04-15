@@ -48,6 +48,27 @@ var migrations = []struct {
 		target     TEXT NOT NULL DEFAULT '127.0.0.1',
 		created_at TEXT NOT NULL DEFAULT (datetime('now'))
 	)`},
+	{11, `CREATE TABLE IF NOT EXISTS http_logs (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts          REAL NOT NULL,
+		host        TEXT NOT NULL DEFAULT '',
+		method      TEXT NOT NULL DEFAULT '',
+		uri         TEXT NOT NULL DEFAULT '',
+		status      INTEGER NOT NULL DEFAULT 0,
+		duration    REAL NOT NULL DEFAULT 0,
+		size        INTEGER NOT NULL DEFAULT 0,
+		remote_addr TEXT NOT NULL DEFAULT ''
+	)`},
+	{12, `CREATE TABLE IF NOT EXISTS dns_logs (
+		id      INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts      REAL NOT NULL,
+		domain  TEXT NOT NULL DEFAULT '',
+		type    TEXT NOT NULL DEFAULT '',
+		action  TEXT NOT NULL DEFAULT '',
+		result  TEXT NOT NULL DEFAULT ''
+	)`},
+	{13, `CREATE INDEX IF NOT EXISTS idx_http_logs_ts ON http_logs(ts)`},
+	{14, `CREATE INDEX IF NOT EXISTS idx_dns_logs_ts ON dns_logs(ts)`},
 }
 
 func Migrate(db *sql.DB) error {

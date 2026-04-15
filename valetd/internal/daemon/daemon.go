@@ -9,12 +9,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/loaapp/valet/valetd/internal/caddy"
 	"github.com/loaapp/valet/valetd/internal/certs"
 	"github.com/loaapp/valet/valetd/internal/db"
 	"github.com/loaapp/valet/valetd/internal/dns"
 	"github.com/loaapp/valet/valetd/internal/logbuf"
+	"github.com/loaapp/valet/valetd/internal/logstore"
 	"github.com/loaapp/valet/valetd/internal/mcpserver"
 	"github.com/loaapp/valet/valetd/internal/metrics"
 	"github.com/loaapp/valet/valetd/internal/routes"
@@ -37,7 +39,7 @@ type Daemon struct {
 	certMgr   *certs.Manager
 	mcpHTTP   *http.Server
 	collector *metrics.Collector
-	logBuf    *logbuf.RingBuffer
+	logStore  *logstore.Store
 	tailer    *logbuf.Tailer
 }
 
@@ -133,13 +135,27 @@ func (d *Daemon) Start() error {
 	d.collector = metrics.NewCollector(database.DB)
 	d.collector.Start()
 
-	// Start log buffer and tailer
-	d.logBuf = logbuf.New(10000)
-	d.tailer = logbuf.NewTailer(filepath.Join(dataDir, "access.log"), d.logBuf)
+	// Start log store and tailer
+	d.logStore = logstore.New(database.DB)
+	d.tailer = logbuf.NewTailer(filepath.Join(dataDir, "access.log"), d.logStore)
 	d.tailer.Start()
 
+	// Wire log store into DNS server
+	d.dnsServer.SetLogStore(d.logStore)
+
+	// Start periodic log cleanup (every 10 minutes, deletes entries older than 24h)
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := d.logStore.Cleanup(); err != nil {
+				log.Printf("Warning: log cleanup error: %v", err)
+			}
+		}
+	}()
+
 	// Start API server
-	d.apiServer = server.New(d.config.APIAddr, database.DB, d.routeMgr, d.certMgr, d.collector, d.logBuf, d.dnsServer)
+	d.apiServer = server.New(d.config.APIAddr, database.DB, d.routeMgr, d.certMgr, d.collector, d.logStore, d.dnsServer)
 	if err := d.apiServer.Start(); err != nil {
 		return fmt.Errorf("start API server: %w", err)
 	}

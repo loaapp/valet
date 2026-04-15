@@ -18,7 +18,7 @@ import (
 	"github.com/loaapp/valet/valetd/internal/certs"
 	"github.com/loaapp/valet/valetd/internal/db"
 	"github.com/loaapp/valet/valetd/internal/dns"
-	"github.com/loaapp/valet/valetd/internal/logbuf"
+	"github.com/loaapp/valet/valetd/internal/logstore"
 	"github.com/loaapp/valet/valetd/internal/metrics"
 	"github.com/loaapp/valet/valetd/internal/resolver"
 	"github.com/loaapp/valet/valetd/internal/routes"
@@ -31,17 +31,17 @@ type Server struct {
 	routeMgr   *routes.Manager
 	certMgr    *certs.Manager
 	collector  *metrics.Collector
-	logBuf     *logbuf.RingBuffer
+	logStore   *logstore.Store
 	dnsServer  *dns.Server
 }
 
-func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs.Manager, collector *metrics.Collector, logBuf *logbuf.RingBuffer, dnsServer *dns.Server) *Server {
+func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs.Manager, collector *metrics.Collector, logStore *logstore.Store, dnsServer *dns.Server) *Server {
 	s := &Server{
 		database:  database,
 		routeMgr:  routeMgr,
 		certMgr:   certMgr,
 		collector: collector,
-		logBuf:    logBuf,
+		logStore:  logStore,
 		dnsServer: dnsServer,
 	}
 
@@ -733,7 +733,7 @@ func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	if s.logBuf == nil {
+	if s.logStore == nil {
 		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
@@ -751,36 +751,24 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	route := r.URL.Query().Get("route")
 	sinceStr := r.URL.Query().Get("since")
 
-	var entries []logbuf.LogEntry
+	var since float64
 	if sinceStr != "" {
 		ts, err := strconv.ParseFloat(sinceStr, 64)
 		if err != nil || math.IsNaN(ts) {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid since parameter"))
 			return
 		}
-		entries = s.logBuf.Since(ts)
-	} else {
-		entries = s.logBuf.Last(limit)
+		since = ts
 	}
 
-	// Filter by route (host) if specified
-	if route != "" {
-		filtered := make([]logbuf.LogEntry, 0, len(entries))
-		for _, e := range entries {
-			if e.Host == route {
-				filtered = append(filtered, e)
-			}
-		}
-		entries = filtered
-	}
-
-	// Apply limit after filtering
-	if len(entries) > limit {
-		entries = entries[len(entries)-limit:]
+	entries, err := s.logStore.GetHTTPLogs(limit, since, route)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
 	}
 
 	if entries == nil {
-		entries = []logbuf.LogEntry{}
+		entries = []logstore.HTTPLogEntry{}
 	}
 	writeJSON(w, http.StatusOK, entries)
 }
@@ -813,7 +801,7 @@ func (s *Server) handleDNSStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDNSLogs(w http.ResponseWriter, r *http.Request) {
-	if s.dnsServer == nil {
+	if s.logStore == nil {
 		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
@@ -825,7 +813,14 @@ func (s *Server) handleDNSLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	entries := s.dnsServer.QueryLogs().Last(limit)
+	entries, err := s.logStore.GetDNSLogs(limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if entries == nil {
+		entries = []logstore.DNSLogEntry{}
+	}
 	writeJSON(w, http.StatusOK, entries)
 }
 
