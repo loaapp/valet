@@ -130,6 +130,13 @@
     return h && Array.isArray(h.totals) && h.totals.length >= 2;
   }
 
+  // Force chart rebuild when range changes
+  function handleRangeChange(range) {
+    setSelectedRange(range);
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    setTimeout(updateChart, 500);
+  }
+
   onMount(() => {
     startMetricsPolling();
     chartTimer = setInterval(updateChart, 3000);
@@ -187,16 +194,15 @@
           <button
             class="btn btn-sm"
             class:btn-primary={getSelectedRange() === range}
-            onclick={() => setSelectedRange(range)}
+            onclick={() => handleRangeChange(range)}
           >{range}</button>
         {/each}
       </div>
     </div>
     <div class="chart-container">
-      {#if hasChartData()}
-        <canvas bind:this={chartCanvas} height="180"></canvas>
-      {:else}
-        <div class="chart-empty">Waiting for data...</div>
+      <canvas bind:this={chartCanvas}></canvas>
+      {#if !hasChartData()}
+        <div class="chart-overlay">No data for this range</div>
       {/if}
     </div>
   </div>
@@ -319,13 +325,15 @@
     height: 180px;
     position: relative;
   }
-  .chart-empty {
+  .chart-overlay {
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 100%;
     color: var(--text-muted);
     font-size: 12px;
+    pointer-events: none;
   }
   .table-section {
     background: var(--bg-card);
