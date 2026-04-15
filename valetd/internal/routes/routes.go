@@ -10,6 +10,7 @@ import (
 	"github.com/loaapp/valet/valetd/internal/db"
 	"github.com/loaapp/valet/valetd/internal/dns"
 	"github.com/loaapp/valet/valetd/internal/hosts"
+	"github.com/loaapp/valet/valetd/internal/resolver"
 )
 
 // Manager coordinates route changes across DB, certs, Caddy, DNS, and hosts.
@@ -118,8 +119,15 @@ func (m *Manager) syncAll() error {
 		return fmt.Errorf("caddy reload: %w", err)
 	}
 
-	// Determine which domains need /etc/hosts entries
-	// (domains whose TLD is NOT managed by our DNS server)
+	// Update DNS server with all route domains (for exact-match resolution)
+	var allDomains []string
+	for _, r := range routes {
+		allDomains = append(allDomains, r.Domain)
+	}
+	m.dnsServer.SetDomains(allDomains)
+
+	// Determine which domains need /etc/hosts entries as fallback
+	// (domains whose parent domain doesn't have a resolver file installed)
 	tlds, err := db.ListTLDs(m.database)
 	if err != nil {
 		return err
@@ -132,7 +140,9 @@ func (m *Manager) syncAll() error {
 	var hostsDomains []string
 	for _, r := range routes {
 		tld := extractTLD(r.Domain)
-		if !managedTLDs[tld] {
+		parentDomain := extractParentDomain(r.Domain)
+		// Only need /etc/hosts if neither the TLD nor parent domain has a resolver
+		if !managedTLDs[tld] && !resolver.IsInstalled(parentDomain) && !resolver.IsInstalled(tld) {
 			hostsDomains = append(hostsDomains, r.Domain)
 		}
 	}
@@ -164,6 +174,16 @@ func extractTLD(domain string) string {
 		return ""
 	}
 	return parts[len(parts)-1]
+}
+
+// extractParentDomain returns the parent domain.
+// e.g., "foo.godaddy.com" → "godaddy.com"
+func extractParentDomain(domain string) string {
+	parts := strings.Split(domain, ".")
+	if len(parts) < 3 {
+		return domain
+	}
+	return strings.Join(parts[1:], ".")
 }
 
 // normalizeUpstream strips protocol prefixes and adds localhost if just a port.

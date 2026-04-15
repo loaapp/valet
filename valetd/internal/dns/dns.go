@@ -10,10 +10,12 @@ import (
 	mdns "github.com/miekg/dns"
 )
 
-// Server is an embedded DNS server that resolves managed TLD domains to 127.0.0.1.
+// Server is an embedded DNS server that resolves known route domains to 127.0.0.1
+// and forwards all other queries to upstream DNS.
 type Server struct {
-	mu   sync.RWMutex
-	tlds map[string]bool // managed TLDs (e.g., "test", "local")
+	mu      sync.RWMutex
+	domains map[string]bool // exact domains with routes (e.g., "foo.godaddy.com")
+	tlds    map[string]bool // managed TLDs for wildcard resolution (e.g., "test")
 
 	udpServer *mdns.Server
 	tcpServer *mdns.Server
@@ -21,17 +23,28 @@ type Server struct {
 
 func NewServer() *Server {
 	return &Server{
-		tlds: make(map[string]bool),
+		domains: make(map[string]bool),
+		tlds:    make(map[string]bool),
 	}
 }
 
-// SetTLDs replaces the set of managed TLDs.
+// SetTLDs replaces the set of managed TLDs (wildcard: all *.tld → 127.0.0.1).
 func (s *Server) SetTLDs(tlds []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tlds = make(map[string]bool, len(tlds))
 	for _, tld := range tlds {
 		s.tlds[strings.TrimPrefix(tld, ".")] = true
+	}
+}
+
+// SetDomains replaces the set of known route domains (exact match → 127.0.0.1).
+func (s *Server) SetDomains(domains []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.domains = make(map[string]bool, len(domains))
+	for _, d := range domains {
+		s.domains[strings.ToLower(d)] = true
 	}
 }
 
@@ -55,7 +68,6 @@ func (s *Server) Start(addr string) error {
 		errCh <- s.tcpServer.ListenAndServe()
 	}()
 
-	// Wait briefly for startup errors
 	select {
 	case err := <-errCh:
 		return fmt.Errorf("dns server failed: %w", err)
@@ -82,7 +94,7 @@ func (s *Server) handleDNS(w mdns.ResponseWriter, r *mdns.Msg) {
 
 	for _, q := range r.Question {
 		if q.Qtype == mdns.TypeA || q.Qtype == mdns.TypeAAAA {
-			if s.isManagedDomain(q.Name) {
+			if s.shouldResolveLocally(q.Name) {
 				if q.Qtype == mdns.TypeA {
 					m.Answer = append(m.Answer, &mdns.A{
 						Hdr: mdns.RR_Header{
@@ -94,9 +106,9 @@ func (s *Server) handleDNS(w mdns.ResponseWriter, r *mdns.Msg) {
 						A: net.ParseIP("127.0.0.1"),
 					})
 				}
-				// For AAAA, return empty (no IPv6 loopback needed for local dev)
+				// AAAA: return empty (no IPv6 loopback needed for local dev)
 			} else {
-				// Forward to system DNS for non-managed domains
+				// Forward to upstream DNS
 				s.forwardQuery(w, r)
 				return
 			}
@@ -106,24 +118,36 @@ func (s *Server) handleDNS(w mdns.ResponseWriter, r *mdns.Msg) {
 	w.WriteMsg(m)
 }
 
-// isManagedDomain checks if the query name belongs to a managed TLD.
-func (s *Server) isManagedDomain(name string) bool {
+// shouldResolveLocally checks if a query should resolve to 127.0.0.1.
+// Returns true if:
+//  1. The domain exactly matches a known route, OR
+//  2. The domain's TLD is a managed wildcard TLD
+func (s *Server) shouldResolveLocally(name string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// name is FQDN with trailing dot, e.g., "myapp.test."
-	name = strings.TrimSuffix(name, ".")
-	parts := strings.Split(name, ".")
-	if len(parts) < 2 {
-		return false
+	// name is FQDN with trailing dot, e.g., "foo.godaddy.com."
+	clean := strings.ToLower(strings.TrimSuffix(name, "."))
+
+	// Check exact domain match (route-based)
+	if s.domains[clean] {
+		return true
 	}
-	tld := parts[len(parts)-1]
-	return s.tlds[tld]
+
+	// Check wildcard TLD match
+	parts := strings.Split(clean, ".")
+	if len(parts) >= 2 {
+		tld := parts[len(parts)-1]
+		if s.tlds[tld] {
+			return true
+		}
+	}
+
+	return false
 }
 
 // forwardQuery forwards a DNS query to the system's upstream DNS resolver.
 func (s *Server) forwardQuery(w mdns.ResponseWriter, r *mdns.Msg) {
-	// Use Google's public DNS as fallback upstream
 	upstream := "8.8.8.8:53"
 
 	client := new(mdns.Client)
