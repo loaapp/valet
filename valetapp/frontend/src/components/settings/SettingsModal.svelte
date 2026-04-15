@@ -137,7 +137,13 @@
             <p class="hint">Valet uses macOS resolver files (<code>/etc/resolver/</code>) to route DNS queries for managed TLDs to the local DNS server. This requires a one-time setup with sudo.</p>
 
             {#if dnsStatus.length === 0}
-              <p class="hint">No managed TLDs configured. Add one in the TLDs view first.</p>
+              <div class="dns-empty">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.5">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <p>No managed TLDs configured yet.</p>
+                <p class="hint">Close this dialog and go to <strong>TLDs</strong> in the sidebar to add one (e.g. <code>.test</code>), then come back here to install the DNS resolver.</p>
+              </div>
             {:else}
               <div class="dns-table">
                 {#each dnsStatus as item}
@@ -276,4 +282,7 @@
   .dns-instructions { margin-top: 1rem; }
   .dns-instructions h4 { font-size: 0.85rem; font-weight: 600; margin: 0 0 0.5rem; color: var(--text-primary); }
   .dns-command { display: block; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-primary); user-select: all; }
+  .dns-empty { text-align: center; padding: 1.5rem 1rem; border: 1px dashed var(--border); border-radius: var(--radius); margin-bottom: 1rem; }
+  .dns-empty p { margin: 0.5rem 0 0; font-size: 0.85rem; color: var(--text-secondary); }
+  .dns-empty code { background: var(--bg-input); padding: 1px 5px; border-radius: 3px; font-size: 0.8rem; }
 </style>

@@ -3,10 +3,10 @@
 import {models} from '../models';
 import {context} from '../models';
 
+export function GetDNSStatus():Promise<Array<Record<string, any>>>;
+
 export function GetStatus():Promise<models.DaemonStatus>;
 
 export function IsDaemonRunning():Promise<boolean>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
-
-export function Trust():Promise<void>;

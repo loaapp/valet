@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -18,158 +17,183 @@ import (
 	"github.com/loaapp/valet/valetd/internal/resolver"
 	"github.com/loaapp/valet/valetd/internal/routes"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/spf13/cobra"
 )
 
 func main() {
-	// Handle subcommands before flag parsing.
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "mcp":
-			runMCP()
-			return
-		case "dns":
-			runDNS()
-			return
-		}
+	root := &cobra.Command{
+		Use:   "valetd",
+		Short: "Valet daemon — local development reverse proxy",
 	}
 
-	apiAddr := flag.String("api", ":7800", "API listen address")
-	dnsAddr := flag.String("dns", ":53", "DNS listen address (empty to disable)")
-	flag.Parse()
+	root.AddCommand(serveCmd())
+	root.AddCommand(mcpCmd())
+	root.AddCommand(dnsCmd())
 
-	// Setup logging to file
-	setupLogging()
+	// Default to serve if no subcommand given
+	root.RunE = serveCmd().RunE
 
-	d := daemon.New(daemon.Config{
-		APIAddr: *apiAddr,
-		DNSAddr: *dnsAddr,
+	if err := root.Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func serveCmd() *cobra.Command {
+	var apiAddr, dnsAddr string
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start the daemon (default)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			setupLogging()
+
+			d := daemon.New(daemon.Config{
+				APIAddr: apiAddr,
+				DNSAddr: dnsAddr,
+			})
+
+			if err := d.Start(); err != nil {
+				log.Fatalf("Failed to start: %v", err)
+			}
+
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+			<-sig
+
+			d.Stop()
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&apiAddr, "api", ":7800", "API listen address")
+	cmd.Flags().StringVar(&dnsAddr, "dns", ":53", "DNS listen address (empty to disable)")
+	return cmd
+}
+
+func mcpCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mcp",
+		Short: "Run MCP server on stdio (for Claude Code)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			database, err := db.Open()
+			if err != nil {
+				return fmt.Errorf("open database: %w", err)
+			}
+			defer database.Close()
+
+			certMgr, err := certs.NewManager()
+			if err != nil {
+				return fmt.Errorf("init cert manager: %w", err)
+			}
+
+			dataDir, err := db.DataDir()
+			if err != nil {
+				return fmt.Errorf("get data dir: %w", err)
+			}
+
+			dnsServer := dns.NewServer()
+			routeMgr := routes.NewManager(database.DB, certMgr, dnsServer, dataDir)
+			mcpSrv := mcpserver.New(database.DB, routeMgr, certMgr)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+			go func() { <-sig; cancel() }()
+
+			session, err := mcpSrv.Server().Connect(ctx, &mcp.StdioTransport{}, nil)
+			if err != nil {
+				return fmt.Errorf("MCP connect: %w", err)
+			}
+			return session.Wait()
+		},
+	}
+}
+
+func dnsCmd() *cobra.Command {
+	dnsRoot := &cobra.Command{
+		Use:   "dns",
+		Short: "Manage DNS resolvers",
+	}
+
+	dnsRoot.AddCommand(&cobra.Command{
+		Use:   "install",
+		Short: "Install /etc/resolver/ files for all managed TLDs (requires sudo)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTLDs(func(database *db.AppDB, tlds []db.ManagedTLD) error {
+				if len(tlds) == 0 {
+					fmt.Println("No managed TLDs configured. Add one first with: valet tld add <tld>")
+					return nil
+				}
+				for _, t := range tlds {
+					if err := resolver.Install(t.TLD); err != nil {
+						fmt.Fprintf(os.Stderr, "Failed to install resolver for .%s: %v\n", t.TLD, err)
+					} else {
+						db.UpdateTLDResolver(database.DB, t.TLD, true)
+						fmt.Printf("Installed /etc/resolver/%s\n", t.TLD)
+					}
+				}
+				fmt.Println("Done. DNS resolvers installed.")
+				return nil
+			})
+		},
 	})
 
-	if err := d.Start(); err != nil {
-		log.Fatalf("Failed to start: %v", err)
-	}
+	dnsRoot.AddCommand(&cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove /etc/resolver/ files for all managed TLDs (requires sudo)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTLDs(func(database *db.AppDB, tlds []db.ManagedTLD) error {
+				for _, t := range tlds {
+					if err := resolver.Remove(t.TLD); err != nil {
+						fmt.Fprintf(os.Stderr, "Failed to remove resolver for .%s: %v\n", t.TLD, err)
+					} else {
+						db.UpdateTLDResolver(database.DB, t.TLD, false)
+						fmt.Printf("Removed /etc/resolver/%s\n", t.TLD)
+					}
+				}
+				fmt.Println("Done. DNS resolvers removed.")
+				return nil
+			})
+		},
+	})
 
-	// Wait for shutdown signal
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
+	dnsRoot.AddCommand(&cobra.Command{
+		Use:   "status",
+		Short: "Show DNS resolver status for all managed TLDs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTLDs(func(database *db.AppDB, tlds []db.ManagedTLD) error {
+				if len(tlds) == 0 {
+					fmt.Println("No managed TLDs configured.")
+					return nil
+				}
+				for _, t := range tlds {
+					status := "not installed"
+					if resolver.IsInstalled(t.TLD) {
+						status = "installed"
+					}
+					fmt.Printf(".%-10s %s\n", t.TLD, status)
+				}
+				return nil
+			})
+		},
+	})
 
-	d.Stop()
+	return dnsRoot
 }
 
-func runMCP() {
+// withTLDs opens the database, loads TLDs, and calls fn.
+func withTLDs(fn func(*db.AppDB, []db.ManagedTLD) error) error {
 	database, err := db.Open()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
-		os.Exit(1)
-	}
-	defer database.Close()
-
-	certMgr, err := certs.NewManager()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to init cert manager: %v\n", err)
-		os.Exit(1)
-	}
-
-	dataDir, err := db.DataDir()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to get data dir: %v\n", err)
-		os.Exit(1)
-	}
-
-	dnsServer := dns.NewServer()
-	routeMgr := routes.NewManager(database.DB, certMgr, dnsServer, dataDir)
-
-	mcpSrv := mcpserver.New(database.DB, routeMgr, certMgr)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Handle shutdown signals.
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sig
-		cancel()
-	}()
-
-	session, err := mcpSrv.Server().Connect(ctx, &mcp.StdioTransport{}, nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "MCP connect error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Block until the session ends.
-	if err := session.Wait(); err != nil {
-		fmt.Fprintf(os.Stderr, "MCP session error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func runDNS() {
-	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: valetd dns <install|uninstall|status>")
-		os.Exit(1)
-	}
-
-	database, err := db.Open()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer database.Close()
 
 	tlds, err := db.ListTLDs(database.DB)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to list TLDs: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("list TLDs: %w", err)
 	}
-
-	switch os.Args[2] {
-	case "install":
-		if len(tlds) == 0 {
-			fmt.Println("No managed TLDs configured. Add one first with: valet tld add <tld>")
-			return
-		}
-		for _, t := range tlds {
-			if err := resolver.Install(t.TLD); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to install resolver for .%s: %v\n", t.TLD, err)
-			} else {
-				db.UpdateTLDResolver(database.DB, t.TLD, true)
-				fmt.Printf("Installed /etc/resolver/%s\n", t.TLD)
-			}
-		}
-		fmt.Println("Done. DNS resolvers installed.")
-
-	case "uninstall":
-		for _, t := range tlds {
-			if err := resolver.Remove(t.TLD); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to remove resolver for .%s: %v\n", t.TLD, err)
-			} else {
-				db.UpdateTLDResolver(database.DB, t.TLD, false)
-				fmt.Printf("Removed /etc/resolver/%s\n", t.TLD)
-			}
-		}
-		fmt.Println("Done. DNS resolvers removed.")
-
-	case "status":
-		if len(tlds) == 0 {
-			fmt.Println("No managed TLDs configured.")
-			return
-		}
-		for _, t := range tlds {
-			installed := resolver.IsInstalled(t.TLD)
-			status := "not installed"
-			if installed {
-				status = "installed"
-			}
-			fmt.Printf(".%-10s %s\n", t.TLD, status)
-		}
-
-	default:
-		fmt.Fprintln(os.Stderr, "Usage: valetd dns <install|uninstall|status>")
-		os.Exit(1)
-	}
+	return fn(database, tlds)
 }
 
 func setupLogging() {
