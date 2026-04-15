@@ -64,8 +64,14 @@ func runMCP() {
 		os.Exit(1)
 	}
 
+	dataDir, err := db.DataDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get data dir: %v\n", err)
+		os.Exit(1)
+	}
+
 	dnsServer := dns.NewServer()
-	routeMgr := routes.NewManager(database.DB, certMgr, dnsServer)
+	routeMgr := routes.NewManager(database.DB, certMgr, dnsServer, dataDir)
 
 	mcpSrv := mcpserver.New(database.DB, routeMgr, certMgr)
 

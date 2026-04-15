@@ -1,6 +1,10 @@
 <script>
+  import { onMount } from 'svelte';
   import { getStatus, isConnected, refreshStatus } from '../../lib/stores/status.svelte.js';
+  import { getCurrentMetrics, getHistoryData, getSelectedRange, setSelectedRange, startPolling as startMetricsPolling, stopPolling as stopMetricsPolling } from '../../lib/stores/metrics.svelte.js';
   import { Trust } from '../../../wailsjs/go/api/StatusService.js';
+
+  let chartTimer = null;
 
   async function handleTrust() {
     try {
@@ -10,6 +14,90 @@
       console.error('Trust failed:', err);
     }
   }
+
+  // Compute summary stats from history totals (cumulative over selected range)
+  function computeTotalRequests() {
+    const h = getHistoryData();
+    if (!h || !Array.isArray(h.totals)) return 0;
+    return h.totals.reduce((sum, p) => sum + (p.reqs || 0), 0);
+  }
+
+  function computeErrorRate() {
+    const h = getHistoryData();
+    if (!h || !Array.isArray(h.totals)) return '0%';
+    let reqs = 0, errs = 0;
+    for (const p of h.totals) { reqs += (p.reqs || 0); errs += (p.errs || 0); }
+    if (reqs === 0) return '0%';
+    return ((errs / reqs) * 100).toFixed(1) + '%';
+  }
+
+  function computeAvgLatency() {
+    const h = getHistoryData();
+    if (!h || !Array.isArray(h.totals)) return '0ms';
+    let reqs = 0, weighted = 0;
+    for (const p of h.totals) {
+      const r = p.reqs || 0;
+      reqs += r;
+      weighted += r * (p.latMs || 0);
+    }
+    if (reqs === 0) return '0ms';
+    return (weighted / reqs).toFixed(1) + 'ms';
+  }
+
+  // Aggregate per-route stats from history data
+  function getRouteRows() {
+    const h = getHistoryData();
+    if (!h || !h.routes || typeof h.routes !== 'object') return [];
+    return Object.entries(h.routes)
+      .map(([domain, points]) => {
+        const arr = Array.isArray(points) ? points : [];
+        let reqs = 0, errs = 0, bytesOut = 0, weighted = 0;
+        for (const p of arr) {
+          reqs += (p.reqs || 0);
+          errs += (p.errs || 0);
+          bytesOut += (p.bytesOut || 0);
+          weighted += (p.reqs || 0) * (p.latMs || 0);
+        }
+        const latMs = reqs > 0 ? weighted / reqs : 0;
+        return { domain, reqs, errs, latMs, bytesOut };
+      })
+      .sort((a, b) => b.reqs - a.reqs);
+  }
+
+  // Build SVG path from history totals
+  function getChartPath() {
+    const h = getHistoryData();
+    if (!h || !Array.isArray(h.totals) || h.totals.length < 2) return { path: '', fill: '', maxVal: 0, points: [] };
+
+    const totals = h.totals;
+    const maxReqs = Math.max(...totals.map(p => p.reqs || 0), 1);
+    const w = 100; // viewBox width percentage
+    const ht = 100; // viewBox height percentage
+    const padding = 2;
+
+    const points = totals.map((p, i) => {
+      const x = padding + (i / (totals.length - 1)) * (w - padding * 2);
+      const y = ht - padding - ((p.reqs || 0) / maxReqs) * (ht - padding * 2);
+      return { x, y, reqs: p.reqs || 0, ts: p.ts };
+    });
+
+    const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
+    const fillPath = `${linePath} L${points[points.length-1].x},${ht} L${points[0].x},${ht} Z`;
+
+    return { path: linePath, fill: fillPath, maxVal: maxReqs, points };
+  }
+
+  function formatTime(ts) {
+    const d = new Date(ts * 1000);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  onMount(() => {
+    startMetricsPolling();
+    return () => {
+      stopMetricsPolling();
+    };
+  });
 </script>
 
 <div class="page">
@@ -35,25 +123,81 @@
       </div>
     </div>
     <div class="card">
-      <div class="card-label">Routes</div>
-      <div class="card-value">{getStatus()?.routes ?? 0}</div>
+      <div class="card-label">Total Requests</div>
+      <div class="card-value">{computeTotalRequests()}</div>
     </div>
     <div class="card">
-      <div class="card-label">TLDs</div>
-      <div class="card-value">{getStatus()?.tlds ?? 0}</div>
+      <div class="card-label">Error Rate</div>
+      <div class="card-value">{computeErrorRate()}</div>
     </div>
     <div class="card">
-      <div class="card-label">mkcert</div>
-      <div class="card-value" class:text-success={getStatus()?.mkcert} class:text-danger={!getStatus()?.mkcert}>
-        {getStatus()?.mkcert ? 'Installed' : 'Not Found'}
-      </div>
+      <div class="card-label">Avg Latency</div>
+      <div class="card-value">{computeAvgLatency()}</div>
     </div>
   </div>
+
+  <div class="chart-section">
+    <div class="chart-header">
+      <h2>Requests Over Time</h2>
+      <div class="range-buttons">
+        {#each ['5m', '1h', '24h'] as range}
+          <button
+            class="btn btn-sm"
+            class:btn-primary={getSelectedRange() === range}
+            onclick={() => setSelectedRange(range)}
+          >{range}</button>
+        {/each}
+      </div>
+    </div>
+    <div class="chart-container">
+      {#if getChartPath().points.length >= 2}
+        {@const chart = getChartPath()}
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" class="chart-svg">
+          <path d={chart.fill} fill="rgba(0,122,255,0.08)" />
+          <path d={chart.path} fill="none" stroke="#007AFF" stroke-width="0.5" vector-effect="non-scaling-stroke" />
+        </svg>
+        <div class="chart-labels">
+          <span class="chart-label-max">{chart.maxVal} req/s</span>
+          <span class="chart-label-zero">0</span>
+        </div>
+      {:else}
+        <div class="chart-empty">Waiting for data...</div>
+      {/if}
+    </div>
+  </div>
+
+  {#if getRouteRows().length > 0}
+    <div class="table-section">
+      <h2>Route Statistics</h2>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Domain</th>
+            <th>Requests</th>
+            <th>Errors</th>
+            <th>Avg Latency</th>
+            <th>Bytes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each getRouteRows() as row}
+            <tr>
+              <td class="domain">{row.domain}</td>
+              <td>{row.reqs}</td>
+              <td>{row.errs}</td>
+              <td>{row.latMs.toFixed(1)}ms</td>
+              <td>{row.bytesOut}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {/if}
 </div>
 
 <style>
   .page {
-    max-width: 640px;
+    max-width: 720px;
   }
   .page-header {
     display: flex;
@@ -63,6 +207,11 @@
   }
   h1 {
     font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  h2 {
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-primary);
   }
@@ -84,6 +233,7 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px;
+    margin-bottom: 20px;
   }
   .card {
     background: var(--bg-card);
@@ -110,5 +260,89 @@
   }
   .text-danger {
     color: var(--danger);
+  }
+  .chart-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+  }
+  .chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .range-buttons {
+    display: flex;
+    gap: 4px;
+  }
+  .chart-container {
+    width: 100%;
+    height: 180px;
+    position: relative;
+  }
+  .chart-svg {
+    width: 100%;
+    height: 100%;
+  }
+  .chart-labels {
+    position: absolute;
+    top: 0;
+    right: 8px;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    pointer-events: none;
+  }
+  .chart-label-max, .chart-label-zero {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .chart-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+  .table-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    box-shadow: var(--shadow);
+  }
+  .table-section h2 {
+    margin-bottom: 12px;
+  }
+  .table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .table th {
+    text-align: left;
+    padding: 8px 10px;
+    font-weight: 500;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+  }
+  .table .domain {
+    color: var(--text-primary);
+    font-weight: 500;
   }
 </style>

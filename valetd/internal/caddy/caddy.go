@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 
 	caddyv2 "github.com/caddyserver/caddy/v2"
 	"github.com/loaapp/valet/valetd/internal/db"
@@ -14,7 +15,7 @@ import (
 
 // BuildConfig generates a full Caddy JSON config from the current routes.
 // combinedCert/combinedKey point to a single mkcert cert covering all domains + localhost.
-func BuildConfig(routes []db.Route, combinedCert, combinedKey string) ([]byte, error) {
+func BuildConfig(routes []db.Route, combinedCert, combinedKey, dataDir string) ([]byte, error) {
 	if len(routes) == 0 {
 		return emptyConfig()
 	}
@@ -29,6 +30,9 @@ func BuildConfig(routes []db.Route, combinedCert, combinedKey string) ([]byte, e
 	server := map[string]any{
 		"listen": []string{":443", ":80"},
 		"routes": caddyRoutes,
+		"logs": map[string]any{
+			"default_logger_name": "access",
+		},
 	}
 
 	// If we have a combined cert, configure TLS with default_sni so that
@@ -54,10 +58,25 @@ func BuildConfig(routes []db.Route, combinedCert, combinedKey string) ([]byte, e
 
 	cfg := map[string]any{
 		"admin": map[string]any{
-			"disabled": true, // We have our own API
+			"listen": "127.0.0.1:2019",
+		},
+		"logging": map[string]any{
+			"logs": map[string]any{
+				"access": map[string]any{
+					"writer": map[string]any{
+						"output":   "file",
+						"filename": filepath.Join(dataDir, "access.log"),
+					},
+					"encoder": map[string]any{"format": "json"},
+					"include": []string{"http.log.access.*"},
+				},
+			},
 		},
 		"apps": map[string]any{
 			"http": map[string]any{
+				"metrics": map[string]any{
+					"per_host": true,
+				},
 				"servers": map[string]any{
 					"valet": server,
 				},
@@ -170,7 +189,7 @@ func buildTLSApp(routes []db.Route, combinedCert, combinedKey string) map[string
 func emptyConfig() ([]byte, error) {
 	cfg := map[string]any{
 		"admin": map[string]any{
-			"disabled": true,
+			"listen": "127.0.0.1:2019",
 		},
 	}
 	return json.Marshal(cfg)
@@ -188,8 +207,8 @@ func Stop() error {
 }
 
 // Reload builds a new config from routes and applies it.
-func Reload(routes []db.Route, combinedCert, combinedKey string) error {
-	cfg, err := BuildConfig(routes, combinedCert, combinedKey)
+func Reload(routes []db.Route, combinedCert, combinedKey, dataDir string) error {
+	cfg, err := BuildConfig(routes, combinedCert, combinedKey, dataDir)
 	if err != nil {
 		return fmt.Errorf("build config: %w", err)
 	}

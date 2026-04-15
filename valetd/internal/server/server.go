@@ -8,13 +8,17 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/loaapp/valet/valetd/internal/caddy"
 	"github.com/loaapp/valet/valetd/internal/certs"
 	"github.com/loaapp/valet/valetd/internal/db"
+	"github.com/loaapp/valet/valetd/internal/logbuf"
+	"github.com/loaapp/valet/valetd/internal/metrics"
 	"github.com/loaapp/valet/valetd/internal/resolver"
 	"github.com/loaapp/valet/valetd/internal/routes"
 	"github.com/loaapp/valet/valetd/internal/templates"
@@ -25,13 +29,17 @@ type Server struct {
 	database   *sql.DB
 	routeMgr   *routes.Manager
 	certMgr    *certs.Manager
+	collector  *metrics.Collector
+	logBuf     *logbuf.RingBuffer
 }
 
-func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs.Manager) *Server {
+func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs.Manager, collector *metrics.Collector, logBuf *logbuf.RingBuffer) *Server {
 	s := &Server{
-		database: database,
-		routeMgr: routeMgr,
-		certMgr:  certMgr,
+		database:  database,
+		routeMgr:  routeMgr,
+		certMgr:   certMgr,
+		collector: collector,
+		logBuf:    logBuf,
 	}
 
 	mux := http.NewServeMux()
@@ -47,6 +55,9 @@ func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs
 	mux.HandleFunc("POST /api/v1/trust", s.handleTrust)
 	mux.HandleFunc("GET /api/v1/templates", s.handleListTemplates)
 	mux.HandleFunc("POST /api/v1/routes/preview", s.handlePreviewRoute)
+	mux.HandleFunc("GET /api/v1/metrics/current", s.handleMetricsCurrent)
+	mux.HandleFunc("GET /api/v1/metrics/history", s.handleMetricsHistory)
+	mux.HandleFunc("GET /api/v1/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	mux.HandleFunc("PUT /api/v1/settings/{key}", s.handleSetSetting)
 
@@ -583,6 +594,122 @@ func (s *Server) handlePreviewRoute(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(preview)
+}
+
+// --- Metrics & Logs ---
+
+func (s *Server) handleMetricsCurrent(w http.ResponseWriter, r *http.Request) {
+	if s.collector == nil {
+		writeJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	current := s.collector.RRD().GetCurrent()
+	writeJSON(w, http.StatusOK, current)
+}
+
+func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
+	if s.collector == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"resolution": "1s", "routes": map[string]any{}, "totals": []any{}})
+		return
+	}
+
+	rangeStr := r.URL.Query().Get("range")
+	if rangeStr == "" {
+		rangeStr = "5m"
+	}
+	route := r.URL.Query().Get("route")
+
+	rrd := s.collector.RRD()
+
+	if route != "" {
+		points, resolution := rrd.GetHistoryFiltered(route, rangeStr)
+		totals, _ := rrd.GetTotals(rangeStr)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"resolution": resolution,
+			"routes":     map[string]any{route: points},
+			"totals":     totals,
+		})
+		return
+	}
+
+	// All routes
+	current := rrd.GetCurrent()
+	routeData := make(map[string]any, len(current))
+	var resolution string
+	for host := range current {
+		points, res := rrd.GetHistoryFiltered(host, rangeStr)
+		routeData[host] = points
+		resolution = res
+	}
+	if resolution == "" {
+		switch rangeStr {
+		case "1h":
+			resolution = "1m"
+		case "24h":
+			resolution = "1h"
+		default:
+			resolution = "1s"
+		}
+	}
+	totals, _ := rrd.GetTotals(rangeStr)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"resolution": resolution,
+		"routes":     routeData,
+		"totals":     totals,
+	})
+}
+
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if s.logBuf == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	route := r.URL.Query().Get("route")
+	sinceStr := r.URL.Query().Get("since")
+
+	var entries []logbuf.LogEntry
+	if sinceStr != "" {
+		ts, err := strconv.ParseFloat(sinceStr, 64)
+		if err != nil || math.IsNaN(ts) {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid since parameter"))
+			return
+		}
+		entries = s.logBuf.Since(ts)
+	} else {
+		entries = s.logBuf.Last(limit)
+	}
+
+	// Filter by route (host) if specified
+	if route != "" {
+		filtered := make([]logbuf.LogEntry, 0, len(entries))
+		for _, e := range entries {
+			if e.Host == route {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+
+	// Apply limit after filtering
+	if len(entries) > limit {
+		entries = entries[len(entries)-limit:]
+	}
+
+	if entries == nil {
+		entries = []logbuf.LogEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
 }
 
 // --- Helpers ---

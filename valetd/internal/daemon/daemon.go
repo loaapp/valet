@@ -14,7 +14,9 @@ import (
 	"github.com/loaapp/valet/valetd/internal/certs"
 	"github.com/loaapp/valet/valetd/internal/db"
 	"github.com/loaapp/valet/valetd/internal/dns"
+	"github.com/loaapp/valet/valetd/internal/logbuf"
 	"github.com/loaapp/valet/valetd/internal/mcpserver"
+	"github.com/loaapp/valet/valetd/internal/metrics"
 	"github.com/loaapp/valet/valetd/internal/routes"
 	"github.com/loaapp/valet/valetd/internal/server"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -27,13 +29,16 @@ type Config struct {
 }
 
 type Daemon struct {
-	config      Config
-	database    *db.AppDB
-	dnsServer   *dns.Server
-	apiServer   *server.Server
-	routeMgr    *routes.Manager
-	certMgr     *certs.Manager
-	mcpHTTP     *http.Server
+	config    Config
+	database  *db.AppDB
+	dnsServer *dns.Server
+	apiServer *server.Server
+	routeMgr  *routes.Manager
+	certMgr   *certs.Manager
+	mcpHTTP   *http.Server
+	collector *metrics.Collector
+	logBuf    *logbuf.RingBuffer
+	tailer    *logbuf.Tailer
 }
 
 func New(cfg Config) *Daemon {
@@ -51,6 +56,12 @@ func (d *Daemon) Start() error {
 	}
 	d.database = database
 
+	// Resolve data directory
+	dataDir, err := db.DataDir()
+	if err != nil {
+		return fmt.Errorf("data dir: %w", err)
+	}
+
 	// Cert manager
 	certMgr, err := certs.NewManager()
 	if err != nil {
@@ -62,7 +73,7 @@ func (d *Daemon) Start() error {
 	d.dnsServer = dns.NewServer()
 
 	// Route manager
-	d.routeMgr = routes.NewManager(database.DB, certMgr, d.dnsServer)
+	d.routeMgr = routes.NewManager(database.DB, certMgr, d.dnsServer, dataDir)
 
 	// Sync DNS TLDs from database
 	if err := d.routeMgr.SyncDNS(); err != nil {
@@ -94,12 +105,30 @@ func (d *Daemon) Start() error {
 			combinedCert, combinedKey, _ = certMgr.GenerateCombinedCert(tlsDomains)
 		}
 	}
-	if err := caddy.Reload(routeList, combinedCert, combinedKey); err != nil {
+	// Redirect stderr to access.log so Caddy's structured logs are captured
+	accessLogPath := filepath.Join(dataDir, "access.log")
+	accessLogFile, err := os.OpenFile(accessLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		log.Printf("Warning: cannot open access log: %v", err)
+	} else {
+		os.Stderr = accessLogFile
+	}
+
+	if err := caddy.Reload(routeList, combinedCert, combinedKey, dataDir); err != nil {
 		return fmt.Errorf("initial caddy load: %w", err)
 	}
 
+	// Start metrics collector
+	d.collector = metrics.NewCollector()
+	d.collector.Start()
+
+	// Start log buffer and tailer
+	d.logBuf = logbuf.New(10000)
+	d.tailer = logbuf.NewTailer(filepath.Join(dataDir, "access.log"), d.logBuf)
+	d.tailer.Start()
+
 	// Start API server
-	d.apiServer = server.New(d.config.APIAddr, database.DB, d.routeMgr, d.certMgr)
+	d.apiServer = server.New(d.config.APIAddr, database.DB, d.routeMgr, d.certMgr, d.collector, d.logBuf)
 	if err := d.apiServer.Start(); err != nil {
 		return fmt.Errorf("start API server: %w", err)
 	}
@@ -136,6 +165,14 @@ func (d *Daemon) Start() error {
 // Stop gracefully shuts down all components.
 func (d *Daemon) Stop() {
 	log.Println("Stopping valetd...")
+
+	if d.tailer != nil {
+		d.tailer.Stop()
+	}
+
+	if d.collector != nil {
+		d.collector.Stop()
+	}
 
 	if d.mcpHTTP != nil {
 		d.mcpHTTP.Shutdown(context.Background())

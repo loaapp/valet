@@ -21,6 +21,8 @@ func main() {
 	tldSvc := api.NewTLDService(c)
 	settingsSvc := api.NewSettingsService(c)
 	agentSvc := api.NewAgentService()
+	metricsSvc := api.NewMetricsService(c)
+	logsSvc := api.NewLogsService(c)
 
 	err := wails.Run(&options.App{
 		Title:  "Valet",
@@ -36,6 +38,8 @@ func main() {
 			tldSvc.SetContext(ctx)
 			settingsSvc.SetContext(ctx)
 			agentSvc.SetContext(ctx)
+			metricsSvc.SetContext(ctx)
+			logsSvc.SetContext(ctx)
 		},
 		Bind: []interface{}{
 			statusSvc,
@@ -43,6 +47,8 @@ func main() {
 			tldSvc,
 			settingsSvc,
 			agentSvc,
+			metricsSvc,
+			logsSvc,
 		},
 	})
 

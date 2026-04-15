@@ -22,9 +22,6 @@
   </div>
   <span class="upstream">{route.upstream}</span>
   <span class="badges">
-    <span class="badge" class:badge-on={route.tlsEnabled}>
-      {route.tlsEnabled ? 'TLS' : 'Off'}
-    </span>
     {#if route.template}
       <span class="badge badge-template">{route.template}</span>
     {/if}

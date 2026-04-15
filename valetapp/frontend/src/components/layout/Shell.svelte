@@ -4,6 +4,7 @@
   import RouteList from '../routes/RouteList.svelte';
   import TLDList from '../tlds/TLDList.svelte';
   import AgentView from '../agent/AgentView.svelte';
+  import LogsView from '../logs/LogsView.svelte';
   import SettingsModal from '../settings/SettingsModal.svelte';
 
   let currentView = $state('dashboard');
@@ -16,7 +17,7 @@
 
 <div class="shell">
   <Sidebar {currentView} onNavigate={navigate} onOpenSettings={() => settingsOpen = true} />
-  <main class="content" class:no-pad={currentView === 'assistant'}>
+  <main class="content" class:no-pad={currentView === 'assistant' || currentView === 'logs'}>
     {#if currentView === 'dashboard'}
       <Dashboard />
     {:else if currentView === 'routes'}
@@ -25,6 +26,8 @@
       <TLDList />
     {:else if currentView === 'assistant'}
       <AgentView />
+    {:else if currentView === 'logs'}
+      <LogsView />
     {/if}
   </main>
 </div>

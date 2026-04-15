@@ -17,13 +17,15 @@ type Manager struct {
 	database  *sql.DB
 	certMgr   *certs.Manager
 	dnsServer *dns.Server
+	dataDir   string
 }
 
-func NewManager(database *sql.DB, certMgr *certs.Manager, dnsServer *dns.Server) *Manager {
+func NewManager(database *sql.DB, certMgr *certs.Manager, dnsServer *dns.Server, dataDir string) *Manager {
 	return &Manager{
 		database:  database,
 		certMgr:   certMgr,
 		dnsServer: dnsServer,
+		dataDir:   dataDir,
 	}
 }
 
@@ -112,7 +114,7 @@ func (m *Manager) syncAll() error {
 	}
 
 	// Reload Caddy with current routes and combined cert
-	if err := caddy.Reload(routes, combinedCert, combinedKey); err != nil {
+	if err := caddy.Reload(routes, combinedCert, combinedKey, m.dataDir); err != nil {
 		return fmt.Errorf("caddy reload: %w", err)
 	}
 

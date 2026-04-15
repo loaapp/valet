@@ -113,14 +113,13 @@ func statusCmd() *cobra.Command {
 }
 
 func addCmd() *cobra.Command {
-	var noTLS bool
 	cmd := &cobra.Command{
 		Use:   "add <domain> <upstream>",
 		Short: "Add a proxy route",
 		Long:  "Add a proxy route (e.g., valet add myapp.test localhost:3000)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			tls := !noTLS
+			tls := true
 			route, err := c.CreateRoute(models.CreateRouteRequest{
 				Domain:   args[0],
 				Upstream: args[1],
@@ -138,7 +137,6 @@ func addCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&noTLS, "no-tls", false, "Disable TLS for this route")
 	return cmd
 }
 

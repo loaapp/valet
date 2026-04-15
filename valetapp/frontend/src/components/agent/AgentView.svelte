@@ -1,6 +1,7 @@
 <script>
   import { onMount, tick } from 'svelte';
   import { getMessages, getIsGenerating, getStreamingText, loadModelConfig, clearMessages } from '../../lib/stores/agent.svelte.js';
+  import { renderMarkdown } from '../../lib/markdown.js';
   import AgentInput from './AgentInput.svelte';
 
   let messagesEl;
@@ -54,7 +55,7 @@
         </div>
       {:else if msg.role === 'assistant'}
         <div class="message assistant-message">
-          <div class="bubble assistant-bubble">{msg.content}</div>
+          <div class="bubble assistant-bubble markdown">{@html renderMarkdown(msg.content)}</div>
         </div>
       {:else if msg.role === 'toolcall'}
         <div class="message tool-message">
@@ -95,7 +96,7 @@
 
     {#if getStreamingText()}
       <div class="message assistant-message">
-        <div class="bubble assistant-bubble streaming">{getStreamingText()}</div>
+        <div class="bubble assistant-bubble streaming markdown">{@html renderMarkdown(getStreamingText())}</div>
       </div>
     {/if}
   </div>
@@ -171,6 +172,17 @@
   .streaming {
     opacity: 0.9;
   }
+  .markdown :global(p) { margin: 0 0 0.5em; }
+  .markdown :global(p:last-child) { margin-bottom: 0; }
+  .markdown :global(code) { font-family: var(--font-mono); font-size: 0.9em; background: rgba(0,0,0,0.15); padding: 1px 4px; border-radius: 3px; }
+  .markdown :global(pre) { background: rgba(0,0,0,0.2); padding: 8px 10px; border-radius: var(--radius-sm); overflow-x: auto; margin: 0.5em 0; }
+  .markdown :global(pre code) { background: none; padding: 0; font-size: 0.85em; }
+  .markdown :global(ul), .markdown :global(ol) { margin: 0.5em 0; padding-left: 1.5em; }
+  .markdown :global(li) { margin: 0.2em 0; }
+  .markdown :global(h1), .markdown :global(h2), .markdown :global(h3) { margin: 0.5em 0 0.3em; font-size: 1em; font-weight: 600; }
+  .markdown :global(strong) { font-weight: 600; }
+  .markdown :global(a) { color: var(--text-accent); text-decoration: none; }
+  .markdown :global(a:hover) { text-decoration: underline; }
   .error-bubble {
     background: var(--danger-bg, rgba(239, 68, 68, 0.1));
     color: var(--danger);

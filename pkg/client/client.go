@@ -141,6 +141,65 @@ func (c *Client) SetSetting(key, value string) error {
 	return c.put("/api/v1/settings/"+key, body, nil)
 }
 
+// Metrics
+
+func (c *Client) GetMetricsCurrent() (map[string]any, error) {
+	var result map[string]any
+	if err := c.get("/api/v1/metrics/current", &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *Client) GetMetricsHistory(rangeStr, route string) (map[string]any, error) {
+	path := "/api/v1/metrics/history?"
+	params := []string{}
+	if rangeStr != "" {
+		params = append(params, "range="+rangeStr)
+	}
+	if route != "" {
+		params = append(params, "route="+route)
+	}
+	for i, p := range params {
+		if i > 0 {
+			path += "&"
+		}
+		path += p
+	}
+	var result map[string]any
+	if err := c.get(path, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// Logs
+
+func (c *Client) GetLogs(limit int, since float64, route string) ([]map[string]any, error) {
+	path := "/api/v1/logs?"
+	params := []string{}
+	if limit > 0 {
+		params = append(params, fmt.Sprintf("limit=%d", limit))
+	}
+	if since > 0 {
+		params = append(params, fmt.Sprintf("since=%f", since))
+	}
+	if route != "" {
+		params = append(params, "route="+route)
+	}
+	for i, p := range params {
+		if i > 0 {
+			path += "&"
+		}
+		path += p
+	}
+	var result []map[string]any
+	if err := c.get(path, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // Internal HTTP helpers
 
 func (c *Client) get(path string, out any) error {

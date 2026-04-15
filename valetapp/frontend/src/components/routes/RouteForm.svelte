@@ -20,7 +20,7 @@
   // Simple fields
   let domain = $state(_route?.domain ?? '');
   let upstream = $state(_route?.upstream ?? '');
-  let tls = $state(_route?.tlsEnabled ?? false);
+  let tls = $state(true); // Always force HTTPS
   let description = $state(_route?.description ?? '');
 
   // Mode: 'simple' | 'template' | (simple with advanced expanded)
@@ -221,11 +221,6 @@
         <span class="label">Upstream</span>
         <input type="text" bind:value={upstream} placeholder="localhost:3000" class:has-error={fieldErrors.upstream} oninput={() => clearFieldError('upstream')} onblur={handleUpstreamBlur} />
         {#if fieldErrors.upstream}<span class="field-error">{fieldErrors.upstream}</span>{/if}
-      </label>
-
-      <label class="field checkbox-field">
-        <input type="checkbox" bind:checked={tls} />
-        <span>Enable TLS</span>
       </label>
 
       <label class="field">
