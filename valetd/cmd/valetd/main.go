@@ -119,7 +119,7 @@ func tldCmd() *cobra.Command {
 	addCmd := &cobra.Command{
 		Use:   "add",
 		Short: "Register a managed domain/TLD and install its DNS resolver (requires sudo)",
-		Example: "  sudo valetd tld add --tld test          # all *.test → local DNS\n  sudo valetd tld add --tld godaddy.com   # all *.godaddy.com → local DNS",
+		Example: "  sudo valetd tld add --tld test          # all *.test → local DNS\n  sudo valetd tld add --tld example.com   # all *.example.com → local DNS",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			tld, _ := cmd.Flags().GetString("tld")
 			tld = strings.TrimPrefix(tld, ".")
@@ -154,7 +154,7 @@ func tldCmd() *cobra.Command {
 			return nil
 		},
 	}
-	addCmd.Flags().String("tld", "", "TLD or domain to manage (e.g., test, godaddy.com)")
+	addCmd.Flags().String("tld", "", "TLD or domain to manage (e.g., test, example.com)")
 	addCmd.MarkFlagRequired("tld")
 	tldRoot.AddCommand(addCmd)
 

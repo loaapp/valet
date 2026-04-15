@@ -177,7 +177,7 @@ func extractTLD(domain string) string {
 }
 
 // extractParentDomain returns the parent domain.
-// e.g., "foo.godaddy.com" → "godaddy.com"
+// e.g., "foo.example.com" → "example.com"
 func extractParentDomain(domain string) string {
 	parts := strings.Split(domain, ".")
 	if len(parts) < 3 {
