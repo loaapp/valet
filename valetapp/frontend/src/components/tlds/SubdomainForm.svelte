@@ -13,8 +13,11 @@
     if (!value) {
       return 'Subdomain is required.';
     }
+    if (value.includes('.')) {
+      return 'Only a single subdomain level is supported (e.g., "app", not "app.api"). This is a macOS resolver limitation.';
+    }
     if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(value)) {
-      return 'Subdomain must be alphanumeric (hyphens allowed, not at start/end).';
+      return 'Must be alphanumeric (hyphens allowed, not at start/end).';
     }
     return '';
   }
