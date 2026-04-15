@@ -139,6 +139,33 @@ func (c *Client) DeleteTLD(tld string) error {
 	return c.del("/api/v1/tlds/" + tld)
 }
 
+// DNS Entries
+
+func (c *Client) ListDNSEntries(tld string) ([]models.DNSEntry, error) {
+	path := "/api/v1/dns/entries"
+	if tld != "" {
+		path += "?tld=" + tld
+	}
+	var entries []models.DNSEntry
+	if err := c.get(path, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func (c *Client) CreateDNSEntry(domain, tld, target string) (*models.DNSEntry, error) {
+	body := map[string]string{"domain": domain, "tld": tld, "target": target}
+	var entry models.DNSEntry
+	if err := c.post("/api/v1/dns/entries", body, &entry); err != nil {
+		return nil, err
+	}
+	return &entry, nil
+}
+
+func (c *Client) DeleteDNSEntry(domain string) error {
+	return c.del("/api/v1/dns/entries/" + domain)
+}
+
 // Settings
 
 func (c *Client) GetAllSettings() (map[string]string, error) {

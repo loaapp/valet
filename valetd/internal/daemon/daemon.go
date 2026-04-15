@@ -80,6 +80,17 @@ func (d *Daemon) Start() error {
 		log.Printf("Warning: failed to sync DNS TLDs: %v", err)
 	}
 
+	// Load dns_entries into DNS server
+	if dnsEntries, err := db.ListDNSEntries(database.DB); err == nil {
+		mapped := make([]dns.DNSEntry, len(dnsEntries))
+		for i, e := range dnsEntries {
+			mapped[i] = dns.DNSEntry{Domain: e.Domain, Target: e.Target}
+		}
+		d.dnsServer.SetEntries(mapped)
+	} else {
+		log.Printf("Warning: failed to load dns_entries: %v", err)
+	}
+
 	// Start DNS server
 	if d.config.DNSAddr != "" {
 		if err := d.dnsServer.Start(d.config.DNSAddr); err != nil {

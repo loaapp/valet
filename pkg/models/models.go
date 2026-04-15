@@ -46,6 +46,13 @@ type ManagedTLD struct {
 	CreatedAt         string `json:"createdAt"`
 }
 
+type DNSEntry struct {
+	Domain    string `json:"domain"`
+	TLD       string `json:"tld"`
+	Target    string `json:"target"`
+	CreatedAt string `json:"createdAt"`
+}
+
 type DaemonStatus struct {
 	Status   string `json:"status"`
 	Routes   int    `json:"routes"`

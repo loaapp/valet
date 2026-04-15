@@ -26,6 +26,24 @@ export namespace models {
 	        this.handlerConfig = source["handlerConfig"];
 	    }
 	}
+	export class DNSEntry {
+	    domain: string;
+	    tld: string;
+	    target: string;
+	    createdAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DNSEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.domain = source["domain"];
+	        this.tld = source["tld"];
+	        this.target = source["target"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
 	export class DaemonStatus {
 	    status: string;
 	    routes: number;

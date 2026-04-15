@@ -1,49 +1,79 @@
 <script>
   import { onMount } from 'svelte';
-  import { getTlds, loadTlds, deleteTld } from '../../lib/stores/tlds.svelte.js';
-  import TLDForm from './TLDForm.svelte';
+  import { getTlds, getEntries, loadAll, removeEntry } from '../../lib/stores/dns.svelte.js';
+  import SubdomainForm from './SubdomainForm.svelte';
 
-  let showForm = $state(false);
+  let showFormForTLD = $state(null);
 
-  onMount(() => { loadTlds(); });
+  onMount(() => { loadAll(); });
 
-  async function handleDelete(tld) {
-    await deleteTld(tld);
+  function entriesForTLD(tld) {
+    return getEntries().filter(e => e.tld === tld);
+  }
+
+  async function handleDeleteEntry(domain) {
+    await removeEntry(domain);
   }
 </script>
 
 <div class="page">
   <div class="page-header">
-    <h1>TLDs</h1>
-    <button class="btn btn-primary btn-sm" onclick={() => showForm = true}>Add TLD</button>
+    <h1>TLDs & DNS Entries</h1>
   </div>
 
-  <div class="table">
-    <div class="table-header">
-      <span>TLD</span>
-      <span>Resolver</span>
-      <span>Actions</span>
-    </div>
-    {#each getTlds() as tld (tld.tld)}
-      <div class="row">
-        <span class="tld-name">.{tld.tld}</span>
-        <span>
+  {#each getTlds() as tld (tld.tld)}
+    {@const tldEntries = entriesForTLD(tld.tld)}
+    <div class="tld-section">
+      <div class="tld-header">
+        <div class="tld-info">
+          <span class="tld-name">.{tld.tld}</span>
           <span class="badge" class:badge-on={tld.resolverInstalled}>
             {tld.resolverInstalled ? 'Installed' : 'Missing'}
           </span>
-        </span>
-        <span class="actions">
-          <button class="btn btn-ghost btn-sm text-danger" onclick={() => handleDelete(tld.tld)}>Delete</button>
-        </span>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick={() => showFormForTLD = tld.tld}>
+          Register Subdomain
+        </button>
       </div>
-    {:else}
-      <div class="empty">No TLDs configured.</div>
-    {/each}
-  </div>
+
+      {#if !tld.resolverInstalled}
+        <div class="resolver-hint">
+          Resolver missing. Run: <code>sudo valetd tld add --tld {tld.tld}</code>
+        </div>
+      {/if}
+
+      {#if tldEntries.length > 0}
+        <div class="entries-table">
+          <div class="entries-header">
+            <span>Domain</span>
+            <span>Target</span>
+            <span>Actions</span>
+          </div>
+          {#each tldEntries as entry (entry.domain)}
+            <div class="entry-row">
+              <span class="entry-domain">{entry.domain}</span>
+              <span class="entry-target">
+                <code>{entry.target}</code>
+              </span>
+              <span class="actions">
+                <button class="btn btn-ghost btn-sm text-danger" onclick={() => handleDeleteEntry(entry.domain)}>Delete</button>
+              </span>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <div class="no-entries">No subdomains registered.</div>
+      {/if}
+    </div>
+  {:else}
+    <div class="empty">
+      No TLDs configured. Add one via CLI: <code>sudo valetd tld add --tld example</code>
+    </div>
+  {/each}
 </div>
 
-{#if showForm}
-  <TLDForm onClose={() => showForm = false} />
+{#if showFormForTLD}
+  <SubdomainForm tld={showFormForTLD} onClose={() => showFormForTLD = null} />
 {/if}
 
 <style>
@@ -61,40 +91,30 @@
     font-weight: 600;
     color: var(--text-primary);
   }
-  .table {
+  .tld-section {
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    overflow: hidden;
     background: var(--bg-card);
+    margin-bottom: 16px;
+    overflow: hidden;
   }
-  .table-header {
-    display: grid;
-    grid-template-columns: 1fr 1fr 60px;
-    gap: 8px;
-    padding: 8px 14px;
-    background: var(--bg-tertiary);
-    border-bottom: 1px solid var(--border);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .row {
-    display: grid;
-    grid-template-columns: 1fr 1fr 60px;
-    gap: 8px;
-    padding: 8px 14px;
+  .tld-header {
+    display: flex;
     align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--bg-tertiary);
     border-bottom: 1px solid var(--border-subtle);
-    font-size: 12px;
   }
-  .row:last-child {
-    border-bottom: none;
+  .tld-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .tld-name {
+    font-size: 14px;
+    font-weight: 600;
     color: var(--text-accent);
-    font-weight: 500;
   }
   .badge {
     display: inline-block;
@@ -109,6 +129,59 @@
     background: rgba(48,209,88,0.15);
     color: var(--success);
   }
+  .resolver-hint {
+    padding: 8px 14px;
+    background: rgba(255,159,10,0.08);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .resolver-hint code {
+    font-family: var(--font-mono);
+    background: var(--badge-bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10px;
+  }
+  .entries-table {
+    /* nested table */
+  }
+  .entries-header {
+    display: grid;
+    grid-template-columns: 1fr 1fr 60px;
+    gap: 8px;
+    padding: 6px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .entry-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 60px;
+    gap: 8px;
+    padding: 6px 14px;
+    align-items: center;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 12px;
+  }
+  .entry-row:last-child {
+    border-bottom: none;
+  }
+  .entry-domain {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+  .entry-target code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--badge-bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
   .actions {
     display: flex;
     gap: 2px;
@@ -116,10 +189,26 @@
   .text-danger {
     color: var(--danger);
   }
+  .no-entries {
+    padding: 16px 14px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
   .empty {
     padding: 32px 14px;
     text-align: center;
     color: var(--text-muted);
     font-size: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+  }
+  .empty code {
+    font-family: var(--font-mono);
+    background: var(--badge-bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10px;
   }
 </style>

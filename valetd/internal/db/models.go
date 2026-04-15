@@ -25,3 +25,10 @@ type Setting struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
+
+type DNSEntry struct {
+	Domain    string `json:"domain"`
+	TLD       string `json:"tld"`
+	Target    string `json:"target"`
+	CreatedAt string `json:"createdAt"`
+}

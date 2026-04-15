@@ -19,6 +19,7 @@ func main() {
 	statusSvc := api.NewStatusService(c)
 	routeSvc := api.NewRouteService(c)
 	tldSvc := api.NewTLDService(c)
+	dnsSvc := api.NewDNSService(c)
 	settingsSvc := api.NewSettingsService(c)
 	agentSvc := api.NewAgentService()
 	metricsSvc := api.NewMetricsService(c)
@@ -36,6 +37,7 @@ func main() {
 			statusSvc.SetContext(ctx)
 			routeSvc.SetContext(ctx)
 			tldSvc.SetContext(ctx)
+			dnsSvc.SetContext(ctx)
 			settingsSvc.SetContext(ctx)
 			agentSvc.SetContext(ctx)
 			metricsSvc.SetContext(ctx)
@@ -45,6 +47,7 @@ func main() {
 			statusSvc,
 			routeSvc,
 			tldSvc,
+			dnsSvc,
 			settingsSvc,
 			agentSvc,
 			metricsSvc,

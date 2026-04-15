@@ -67,8 +67,9 @@ func (b *QueryBuffer) Last(n int) []QueryLog {
 // and forwards all other queries to upstream DNS.
 type Server struct {
 	mu      sync.RWMutex
-	domains map[string]bool // exact domains with routes
-	tlds    map[string]bool // managed TLDs for wildcard resolution
+	domains map[string]bool   // exact domains with routes (always → 127.0.0.1)
+	entries map[string]string  // dns_entries: domain → target (IP or hostname)
+	tlds    map[string]bool   // managed TLDs for wildcard resolution
 
 	queryLog  *QueryBuffer
 	udpServer *mdns.Server
@@ -78,6 +79,7 @@ type Server struct {
 func NewServer() *Server {
 	return &Server{
 		domains:  make(map[string]bool),
+		entries:  make(map[string]string),
 		tlds:     make(map[string]bool),
 		queryLog: NewQueryBuffer(5000),
 	}
@@ -106,6 +108,53 @@ func (s *Server) SetDomains(domains []string) {
 	for _, d := range domains {
 		s.domains[strings.ToLower(d)] = true
 	}
+}
+
+// DNSEntry mirrors db.DNSEntry to avoid an import cycle.
+type DNSEntry struct {
+	Domain string
+	Target string
+}
+
+// SetEntries replaces the dns_entries map (domain → target).
+func (s *Server) SetEntries(entries []DNSEntry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries = make(map[string]string, len(entries))
+	for _, e := range entries {
+		s.entries[strings.ToLower(e.Domain)] = e.Target
+	}
+}
+
+// getTarget returns the resolution target for a domain. dns_entries take
+// priority over route domains. For TLD wildcard matches, returns "127.0.0.1".
+// Returns empty string if no match.
+func (s *Server) getTarget(domain string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	clean := strings.ToLower(domain)
+
+	// dns_entries take priority
+	if target, ok := s.entries[clean]; ok {
+		return target
+	}
+
+	// Route domains always resolve to loopback
+	if s.domains[clean] {
+		return "127.0.0.1"
+	}
+
+	// TLD wildcard match
+	parts := strings.Split(clean, ".")
+	if len(parts) >= 2 {
+		tld := parts[len(parts)-1]
+		if s.tlds[tld] {
+			return "127.0.0.1"
+		}
+	}
+
+	return ""
 }
 
 // Start begins listening for DNS queries on the given address.
@@ -156,17 +205,37 @@ func (s *Server) handleDNS(w mdns.ResponseWriter, r *mdns.Msg) {
 		qtype := mdns.TypeToString[q.Qtype]
 		clean := strings.ToLower(strings.TrimSuffix(q.Name, "."))
 
-		if q.Qtype == mdns.TypeA || q.Qtype == mdns.TypeAAAA {
-			if s.shouldResolveLocally(q.Name) {
-				if q.Qtype == mdns.TypeA {
-					m.Answer = append(m.Answer, &mdns.A{
+		if q.Qtype == mdns.TypeA || q.Qtype == mdns.TypeAAAA || q.Qtype == mdns.TypeCNAME {
+			target := s.getTarget(clean)
+			if target != "" {
+				ip := net.ParseIP(target)
+				if ip != nil {
+					// IP target — return A record (skip AAAA for IPv4)
+					if q.Qtype == mdns.TypeA {
+						m.Answer = append(m.Answer, &mdns.A{
+							Hdr: mdns.RR_Header{
+								Name:   q.Name,
+								Rrtype: mdns.TypeA,
+								Class:  mdns.ClassINET,
+								Ttl:    60,
+							},
+							A: ip,
+						})
+					}
+				} else {
+					// Hostname target — return CNAME record
+					cnameTarget := target
+					if !strings.HasSuffix(cnameTarget, ".") {
+						cnameTarget += "."
+					}
+					m.Answer = append(m.Answer, &mdns.CNAME{
 						Hdr: mdns.RR_Header{
 							Name:   q.Name,
-							Rrtype: mdns.TypeA,
+							Rrtype: mdns.TypeCNAME,
 							Class:  mdns.ClassINET,
 							Ttl:    60,
 						},
-						A: net.ParseIP("127.0.0.1"),
+						Target: cnameTarget,
 					})
 				}
 				s.queryLog.Push(QueryLog{
@@ -174,7 +243,7 @@ func (s *Server) handleDNS(w mdns.ResponseWriter, r *mdns.Msg) {
 					Domain:    clean,
 					Type:      qtype,
 					Action:    "local",
-					Result:    "127.0.0.1",
+					Result:    target,
 				})
 			} else {
 				// Forward and log
@@ -189,26 +258,10 @@ func (s *Server) handleDNS(w mdns.ResponseWriter, r *mdns.Msg) {
 	w.WriteMsg(m)
 }
 
-// shouldResolveLocally checks if a query should resolve to 127.0.0.1.
+// shouldResolveLocally checks if a query should be handled locally.
 func (s *Server) shouldResolveLocally(name string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	clean := strings.ToLower(strings.TrimSuffix(name, "."))
-
-	if s.domains[clean] {
-		return true
-	}
-
-	parts := strings.Split(clean, ".")
-	if len(parts) >= 2 {
-		tld := parts[len(parts)-1]
-		if s.tlds[tld] {
-			return true
-		}
-	}
-
-	return false
+	return s.getTarget(clean) != ""
 }
 
 // forwardAndLog forwards a query and logs the result. Returns non-empty if response was sent.

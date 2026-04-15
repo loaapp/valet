@@ -1,38 +1,39 @@
 <script>
-  import { addTld } from '../../lib/stores/tlds.svelte.js';
+  import { addEntry } from '../../lib/stores/dns.svelte.js';
 
-  let { onClose } = $props();
+  let { tld, onClose } = $props();
 
-  let tld = $state('');
+  let subdomain = $state('');
+  let target = $state('');
   let saving = $state(false);
   let error = $state('');
   let fieldError = $state('');
 
-  function validateTLD(value) {
+  function validateSubdomain(value) {
     if (!value) {
-      return 'TLD name is required.';
+      return 'Subdomain is required.';
     }
-    if (!/^[a-zA-Z0-9]+$/.test(value)) {
-      return 'TLD must be alphanumeric only (no dots, spaces, or special characters).';
+    if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(value)) {
+      return 'Subdomain must be alphanumeric (hyphens allowed, not at start/end).';
     }
     return '';
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const value = tld.trim().replace(/^\./, '');
-    fieldError = validateTLD(value);
+    const sub = subdomain.trim().toLowerCase();
+    fieldError = validateSubdomain(sub);
     if (fieldError) {
       return;
     }
     saving = true;
     error = '';
-    fieldError = '';
     try {
-      await addTld(value);
+      const domain = sub + '.' + tld;
+      await addEntry(domain, tld, target.trim() || '127.0.0.1');
       onClose();
     } catch (err) {
-      error = err?.message ?? 'Failed to create TLD.';
+      error = err?.message ?? 'Failed to register subdomain.';
     } finally {
       saving = false;
     }
@@ -43,24 +44,28 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="overlay" onclick={onClose}>
   <div class="modal" onclick={(e) => e.stopPropagation()}>
-    <h2>Add TLD</h2>
+    <h2>Register Subdomain</h2>
     <form onsubmit={handleSubmit}>
       <label class="field">
-        <span class="label">TLD Name</span>
-        <div class="tld-input" class:has-error={fieldError}>
-          <span class="prefix">.</span>
-          <input type="text" bind:value={tld} placeholder="test" oninput={() => { fieldError = ''; }} />
+        <span class="label">Subdomain</span>
+        <div class="domain-input" class:has-error={fieldError}>
+          <input type="text" bind:value={subdomain} placeholder="myapp" oninput={() => { fieldError = ''; }} />
+          <span class="suffix">.{tld}</span>
         </div>
         {#if fieldError}<span class="field-error">{fieldError}</span>{/if}
       </label>
-      <p class="hint">This will resolve all <code>*.{tld || 'tld'}</code> domains locally.</p>
+      <label class="field">
+        <span class="label">Target</span>
+        <input type="text" class="input" bind:value={target} placeholder="127.0.0.1 or hostname" />
+        <span class="field-hint">IP address for A record, or hostname for CNAME. Defaults to 127.0.0.1</span>
+      </label>
       {#if error}
         <div class="error">{error}</div>
       {/if}
       <div class="actions">
         <button type="button" class="btn" onclick={onClose}>Cancel</button>
         <button type="submit" class="btn btn-primary" disabled={saving}>
-          {saving ? 'Creating...' : 'Create'}
+          {saving ? 'Saving...' : 'Save'}
         </button>
       </div>
     </form>
@@ -82,7 +87,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 24px;
-    width: 340px;
+    width: 380px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.4);
   }
   h2 {
@@ -95,14 +100,14 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    margin-bottom: 8px;
+    margin-bottom: 12px;
   }
   .label {
     font-size: 11px;
     font-weight: 500;
     color: var(--text-secondary);
   }
-  .tld-input {
+  .domain-input {
     display: flex;
     align-items: center;
     border-radius: var(--radius-sm);
@@ -110,33 +115,37 @@
     background: var(--bg-input);
     overflow: hidden;
   }
-  .tld-input:focus-within {
+  .domain-input:focus-within {
     border-color: var(--accent);
   }
-  .prefix {
-    padding: 7px 0 7px 10px;
-    color: var(--text-muted);
-    font-weight: 600;
-  }
-  .tld-input input {
+  .domain-input input {
     flex: 1;
-    padding: 7px 10px 7px 2px;
+    padding: 7px 4px 7px 10px;
     border: none;
     background: transparent;
     color: var(--text-primary);
     outline: none;
   }
-  .hint {
-    font-size: 11px;
+  .suffix {
+    padding: 7px 10px 7px 0;
     color: var(--text-muted);
-    margin-bottom: 12px;
+    font-weight: 600;
+    font-size: 13px;
   }
-  .hint code {
-    font-family: var(--font-mono);
-    background: var(--badge-bg);
-    padding: 1px 4px;
-    border-radius: 3px;
+  .input {
+    padding: 7px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    outline: none;
+  }
+  .input:focus {
+    border-color: var(--accent);
+  }
+  .field-hint {
     font-size: 10px;
+    color: var(--text-muted);
   }
   .field-error {
     font-size: 11px;

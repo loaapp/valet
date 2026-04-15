@@ -62,6 +62,9 @@ func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs
 	mux.HandleFunc("GET /api/v1/metrics/history", s.handleMetricsHistory)
 	mux.HandleFunc("GET /api/v1/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/v1/dns/logs", s.handleDNSLogs)
+	mux.HandleFunc("GET /api/v1/dns/entries", s.handleListDNSEntries)
+	mux.HandleFunc("POST /api/v1/dns/entries", s.handleCreateDNSEntry)
+	mux.HandleFunc("DELETE /api/v1/dns/entries/{domain...}", s.handleDeleteDNSEntry)
 	mux.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	mux.HandleFunc("PUT /api/v1/settings/{key}", s.handleSetSetting)
 
@@ -458,6 +461,102 @@ func (s *Server) handleDeleteTLD(w http.ResponseWriter, r *http.Request) {
 	s.routeMgr.SyncDNS()
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// --- DNS Entries ---
+
+func (s *Server) handleListDNSEntries(w http.ResponseWriter, r *http.Request) {
+	tld := r.URL.Query().Get("tld")
+	var entries []db.DNSEntry
+	var err error
+	if tld != "" {
+		entries, err = db.ListDNSEntriesByTLD(s.database, tld)
+	} else {
+		entries, err = db.ListDNSEntries(s.database)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if entries == nil {
+		entries = []db.DNSEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+type createDNSEntryRequest struct {
+	Domain string `json:"domain"`
+	TLD    string `json:"tld"`
+	Target string `json:"target"`
+}
+
+func (s *Server) handleCreateDNSEntry(w http.ResponseWriter, r *http.Request) {
+	var req createDNSEntryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
+		return
+	}
+
+	req.Domain = strings.TrimSpace(strings.ToLower(req.Domain))
+	req.TLD = strings.TrimSpace(strings.TrimPrefix(req.TLD, "."))
+	req.Target = strings.TrimSpace(req.Target)
+
+	if req.Domain == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("domain is required"))
+		return
+	}
+	if req.TLD == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("tld is required"))
+		return
+	}
+	if !domainRe.MatchString(req.Domain) {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid domain format"))
+		return
+	}
+	if req.Target == "" {
+		req.Target = "127.0.0.1"
+	}
+
+	entry, err := db.CreateDNSEntry(s.database, req.Domain, req.TLD, req.Target)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// Reload dns_entries into DNS server
+	s.syncDNSEntries()
+
+	writeJSON(w, http.StatusCreated, entry)
+}
+
+func (s *Server) handleDeleteDNSEntry(w http.ResponseWriter, r *http.Request) {
+	domain := r.PathValue("domain")
+	if domain == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("domain is required"))
+		return
+	}
+
+	if err := db.DeleteDNSEntry(s.database, domain); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	s.syncDNSEntries()
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) syncDNSEntries() {
+	entries, err := db.ListDNSEntries(s.database)
+	if err != nil {
+		log.Printf("Warning: failed to load dns_entries: %v", err)
+		return
+	}
+	dnsEntries := make([]dns.DNSEntry, len(entries))
+	for i, e := range entries {
+		dnsEntries[i] = dns.DNSEntry{Domain: e.Domain, Target: e.Target}
+	}
+	s.dnsServer.SetEntries(dnsEntries)
 }
 
 // --- Settings ---

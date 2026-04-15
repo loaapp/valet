@@ -42,6 +42,12 @@ var migrations = []struct {
 		bytes_out  INTEGER NOT NULL DEFAULT 0
 	)`},
 	{9, `CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts)`},
+	{10, `CREATE TABLE IF NOT EXISTS dns_entries (
+		domain     TEXT PRIMARY KEY,
+		tld        TEXT NOT NULL,
+		target     TEXT NOT NULL DEFAULT '127.0.0.1',
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`},
 }
 
 func Migrate(db *sql.DB) error {
