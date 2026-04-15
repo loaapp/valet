@@ -24,3 +24,7 @@ func (s *LogsService) GetLogs(limit int) ([]map[string]any, error) {
 func (s *LogsService) GetLogsSince(since float64) ([]map[string]any, error) {
 	return s.client.GetLogs(0, since, "")
 }
+
+func (s *LogsService) GetDNSLogs(limit int) ([]map[string]any, error) {
+	return s.client.GetDNSLogs(limit)
+}
