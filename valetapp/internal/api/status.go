@@ -26,6 +26,6 @@ func (s *StatusService) IsDaemonRunning() bool {
 	return s.client.IsDaemonRunning()
 }
 
-func (s *StatusService) Trust() error {
-	return s.client.Trust()
+func (s *StatusService) GetDNSStatus() ([]map[string]any, error) {
+	return s.client.GetDNSStatus()
 }

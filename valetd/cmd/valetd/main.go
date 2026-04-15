@@ -15,15 +15,22 @@ import (
 	"github.com/loaapp/valet/valetd/internal/db"
 	"github.com/loaapp/valet/valetd/internal/dns"
 	"github.com/loaapp/valet/valetd/internal/mcpserver"
+	"github.com/loaapp/valet/valetd/internal/resolver"
 	"github.com/loaapp/valet/valetd/internal/routes"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func main() {
-	// Handle "mcp" subcommand before flag parsing.
-	if len(os.Args) > 1 && os.Args[1] == "mcp" {
-		runMCP()
-		return
+	// Handle subcommands before flag parsing.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "mcp":
+			runMCP()
+			return
+		case "dns":
+			runDNS()
+			return
+		}
 	}
 
 	apiAddr := flag.String("api", ":7800", "API listen address")
@@ -95,6 +102,72 @@ func runMCP() {
 	// Block until the session ends.
 	if err := session.Wait(); err != nil {
 		fmt.Fprintf(os.Stderr, "MCP session error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runDNS() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: valetd dns <install|uninstall|status>")
+		os.Exit(1)
+	}
+
+	database, err := db.Open()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	tlds, err := db.ListTLDs(database.DB)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to list TLDs: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch os.Args[2] {
+	case "install":
+		if len(tlds) == 0 {
+			fmt.Println("No managed TLDs configured. Add one first with: valet tld add <tld>")
+			return
+		}
+		for _, t := range tlds {
+			if err := resolver.Install(t.TLD); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to install resolver for .%s: %v\n", t.TLD, err)
+			} else {
+				db.UpdateTLDResolver(database.DB, t.TLD, true)
+				fmt.Printf("Installed /etc/resolver/%s\n", t.TLD)
+			}
+		}
+		fmt.Println("Done. DNS resolvers installed.")
+
+	case "uninstall":
+		for _, t := range tlds {
+			if err := resolver.Remove(t.TLD); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to remove resolver for .%s: %v\n", t.TLD, err)
+			} else {
+				db.UpdateTLDResolver(database.DB, t.TLD, false)
+				fmt.Printf("Removed /etc/resolver/%s\n", t.TLD)
+			}
+		}
+		fmt.Println("Done. DNS resolvers removed.")
+
+	case "status":
+		if len(tlds) == 0 {
+			fmt.Println("No managed TLDs configured.")
+			return
+		}
+		for _, t := range tlds {
+			installed := resolver.IsInstalled(t.TLD)
+			status := "not installed"
+			if installed {
+				status = "installed"
+			}
+			fmt.Printf(".%-10s %s\n", t.TLD, status)
+		}
+
+	default:
+		fmt.Fprintln(os.Stderr, "Usage: valetd dns <install|uninstall|status>")
 		os.Exit(1)
 	}
 }

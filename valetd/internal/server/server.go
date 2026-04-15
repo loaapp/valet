@@ -52,7 +52,7 @@ func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs
 	mux.HandleFunc("GET /api/v1/tlds", s.handleListTLDs)
 	mux.HandleFunc("POST /api/v1/tlds", s.handleAddTLD)
 	mux.HandleFunc("DELETE /api/v1/tlds/{tld}", s.handleDeleteTLD)
-	mux.HandleFunc("POST /api/v1/trust", s.handleTrust)
+	mux.HandleFunc("GET /api/v1/dns/status", s.handleDNSStatus)
 	mux.HandleFunc("GET /api/v1/templates", s.handleListTemplates)
 	mux.HandleFunc("POST /api/v1/routes/preview", s.handlePreviewRoute)
 	mux.HandleFunc("GET /api/v1/metrics/current", s.handleMetricsCurrent)
@@ -456,29 +456,29 @@ func (s *Server) handleDeleteTLD(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-func (s *Server) handleTrust(w http.ResponseWriter, r *http.Request) {
-	// Install resolver files for all managed TLDs
+func (s *Server) handleDNSStatus(w http.ResponseWriter, r *http.Request) {
 	tlds, err := db.ListTLDs(s.database)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	var errors []string
+	type tldStatus struct {
+		TLD       string `json:"tld"`
+		Installed bool   `json:"installed"`
+	}
+
+	var result []tldStatus
 	for _, t := range tlds {
-		if err := resolver.Install(t.TLD); err != nil {
-			errors = append(errors, fmt.Sprintf(".%s: %v", t.TLD, err))
-		} else {
-			db.UpdateTLDResolver(s.database, t.TLD, true)
-		}
+		result = append(result, tldStatus{
+			TLD:       t.TLD,
+			Installed: resolver.IsInstalled(t.TLD),
+		})
 	}
-
-	if len(errors) > 0 {
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("some resolvers failed: %s", strings.Join(errors, "; ")))
-		return
+	if result == nil {
+		result = []tldStatus{}
 	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "trusted"})
+	writeJSON(w, http.StatusOK, result)
 }
 
 // --- Settings ---

@@ -29,7 +29,6 @@ func main() {
 	root.AddCommand(removeCmd())
 	root.AddCommand(listCmd())
 	root.AddCommand(tldCmd())
-	root.AddCommand(trustCmd())
 	root.AddCommand(logsCmd())
 
 	if err := root.Execute(); err != nil {
@@ -264,20 +263,6 @@ func tldCmd() *cobra.Command {
 	})
 
 	return tld
-}
-
-func trustCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "trust",
-		Short: "Install DNS resolvers for managed TLDs (may require sudo)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := c.Trust(); err != nil {
-				return fmt.Errorf("trust failed (you may need to run valetd with sudo for this operation): %w", err)
-			}
-			fmt.Println("DNS resolvers installed for all managed TLDs")
-			return nil
-		},
-	}
 }
 
 func logsCmd() *cobra.Command {

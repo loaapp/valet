@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { getStatus, isConnected, refreshStatus } from '../../lib/stores/status.svelte.js';
   import { getCurrentMetrics, getHistoryData, getSelectedRange, setSelectedRange, startPolling as startMetricsPolling, stopPolling as stopMetricsPolling } from '../../lib/stores/metrics.svelte.js';
-  import { Trust } from '../../../wailsjs/go/api/StatusService.js';
   import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip, Legend } from 'chart.js';
 
   Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip, Legend);
@@ -10,15 +9,6 @@
   let chartCanvas;
   let chartInstance = null;
   let chartTimer = null;
-
-  async function handleTrust() {
-    try {
-      await Trust();
-      await refreshStatus();
-    } catch (err) {
-      console.error('Trust failed:', err);
-    }
-  }
 
   // Compute summary stats from history totals (cumulative over selected range)
   function computeTotalRequests() {
@@ -153,7 +143,6 @@
 <div class="page">
   <div class="page-header">
     <h1>Dashboard</h1>
-    <button class="btn btn-primary btn-sm" onclick={handleTrust}>Trust Certificates</button>
   </div>
 
   {#if !isConnected()}

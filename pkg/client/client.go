@@ -45,8 +45,12 @@ func (c *Client) IsDaemonRunning() bool {
 	return resp.StatusCode == 200
 }
 
-func (c *Client) Trust() error {
-	return c.post("/api/v1/trust", nil, nil)
+func (c *Client) GetDNSStatus() ([]map[string]any, error) {
+	var result []map[string]any
+	if err := c.get("/api/v1/dns/status", &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // Routes

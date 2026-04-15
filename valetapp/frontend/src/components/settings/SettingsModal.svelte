@@ -1,17 +1,32 @@
 <script>
+  import { onMount } from 'svelte';
   import { getSettings, setSetting } from '../../lib/stores/settings.svelte.js';
   import { themes, fonts } from '../../lib/themes.js';
+  import { GetDNSStatus } from '../../../wailsjs/go/api/StatusService.js';
 
   let { open = $bindable(false) } = $props();
 
   let tab = $state('appearance');
   const settings = $derived(getSettings());
+  let dnsStatus = $state([]);
 
   function close() { open = false; }
 
   function saveModel(field, value) {
     setSetting(field, value);
   }
+
+  async function loadDNSStatus() {
+    try {
+      dnsStatus = await GetDNSStatus();
+    } catch {
+      dnsStatus = [];
+    }
+  }
+
+  $effect(() => {
+    if (open && tab === 'dns') loadDNSStatus();
+  });
 </script>
 
 {#if open}
@@ -26,6 +41,7 @@
         <nav class="tabs">
           <button class:active={tab === 'appearance'} onclick={() => tab = 'appearance'}>Appearance</button>
           <button class:active={tab === 'model'} onclick={() => tab = 'model'}>AI Model</button>
+          <button class:active={tab === 'dns'} onclick={() => tab = 'dns'}>DNS</button>
         </nav>
 
         <div class="tab-content">
@@ -112,6 +128,37 @@
                 saveModel('model_id', 'qwen2.5');
                 saveModel('model_api_key', '');
               }}>Ollama (Qwen 2.5)</button>
+            </div>
+          </div>
+
+          {:else if tab === 'dns'}
+          <div class="section">
+            <h3>DNS Resolver Status</h3>
+            <p class="hint">Valet uses macOS resolver files (<code>/etc/resolver/</code>) to route DNS queries for managed TLDs to the local DNS server. This requires a one-time setup with sudo.</p>
+
+            {#if dnsStatus.length === 0}
+              <p class="hint">No managed TLDs configured. Add one in the TLDs view first.</p>
+            {:else}
+              <div class="dns-table">
+                {#each dnsStatus as item}
+                  <div class="dns-row">
+                    <span class="dns-tld">.{item.tld}</span>
+                    <span class="dns-status" class:dns-installed={item.installed}>
+                      {item.installed ? 'Installed' : 'Not installed'}
+                    </span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
+            <div class="dns-instructions">
+              <h4>Installation</h4>
+              <p class="hint">Run this command once to install DNS resolvers for all managed TLDs:</p>
+              <code class="dns-command">sudo valetd dns install</code>
+              <p class="hint" style="margin-top: 0.75rem">To remove resolvers:</p>
+              <code class="dns-command">sudo valetd dns uninstall</code>
+              <p class="hint" style="margin-top: 0.75rem">To check status from the command line:</p>
+              <code class="dns-command">valetd dns status</code>
             </div>
           </div>
           {/if}
@@ -220,4 +267,13 @@
 
   .presets { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
   .preset-label { font-size: 0.78rem; color: var(--text-muted); }
+
+  .dns-table { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 1rem; }
+  .dns-row { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0.75rem; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-card); }
+  .dns-tld { font-family: var(--font-mono); font-weight: 500; font-size: 0.85rem; }
+  .dns-status { font-size: 0.78rem; color: var(--text-muted); }
+  .dns-status.dns-installed { color: var(--success); }
+  .dns-instructions { margin-top: 1rem; }
+  .dns-instructions h4 { font-size: 0.85rem; font-weight: 600; margin: 0 0 0.5rem; color: var(--text-primary); }
+  .dns-command { display: block; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-primary); user-select: all; }
 </style>

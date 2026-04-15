@@ -14,6 +14,6 @@ export function SetContext(arg1) {
   return window['go']['api']['StatusService']['SetContext'](arg1);
 }
 
-export function Trust() {
-  return window['go']['api']['StatusService']['Trust']();
+export function GetDNSStatus() {
+  return window['go']['api']['StatusService']['GetDNSStatus']();
 }
