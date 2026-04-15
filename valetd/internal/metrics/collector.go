@@ -2,7 +2,9 @@ package metrics
 
 import (
 	"bufio"
+	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,30 +12,30 @@ import (
 	"time"
 )
 
-// Collector periodically scrapes Caddy's Prometheus metrics and feeds the RRD.
+// Collector periodically scrapes Caddy's Prometheus metrics and feeds the Store.
 type Collector struct {
-	rrd        *RRD
+	store      *Store
 	prevValues map[string]float64
 	mu         sync.Mutex
 	stopCh     chan struct{}
 }
 
-// NewCollector creates a new metrics collector.
-func NewCollector() *Collector {
+// NewCollector creates a new metrics collector backed by the given database.
+func NewCollector(db *sql.DB) *Collector {
 	return &Collector{
-		rrd:        NewRRD(),
+		store:      NewStore(db),
 		prevValues: make(map[string]float64),
 		stopCh:     make(chan struct{}),
 	}
 }
 
-// Start begins periodic scraping (every 1s) and rollup (every 60s).
+// Start begins periodic scraping (every 1s) and cleanup (every 10m).
 func (c *Collector) Start() {
 	go func() {
 		scrapeTicker := time.NewTicker(1 * time.Second)
-		rollupTicker := time.NewTicker(60 * time.Second)
+		cleanupTicker := time.NewTicker(10 * time.Minute)
 		defer scrapeTicker.Stop()
-		defer rollupTicker.Stop()
+		defer cleanupTicker.Stop()
 
 		for {
 			select {
@@ -41,8 +43,10 @@ func (c *Collector) Start() {
 				return
 			case <-scrapeTicker.C:
 				c.scrape()
-			case <-rollupTicker.C:
-				c.rrd.Rollup()
+			case <-cleanupTicker.C:
+				if err := c.store.Cleanup(); err != nil {
+					log.Printf("metrics cleanup error: %v", err)
+				}
 			}
 		}
 	}()
@@ -53,16 +57,16 @@ func (c *Collector) Stop() {
 	close(c.stopCh)
 }
 
-// RRD returns the underlying RRD store.
-func (c *Collector) RRD() *RRD {
-	return c.rrd
+// Store returns the underlying metrics store.
+func (c *Collector) Store() *Store {
+	return c.store
 }
 
 func metricKey(name, host string) string {
 	return name + "|" + host
 }
 
-// scrape fetches Prometheus metrics from Caddy and pushes deltas into the RRD.
+// scrape fetches Prometheus metrics from Caddy and pushes deltas into the store.
 // Uses simple text parsing instead of expfmt to avoid validation scheme issues.
 func (c *Collector) scrape() {
 	resp, err := http.Get("http://127.0.0.1:2019/metrics")
@@ -148,7 +152,7 @@ func (c *Collector) scrape() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Compute deltas and push to RRD — always push a point (even zeros)
+	// Compute deltas and push to store — always push a point (even zeros)
 	// so the chart gets a continuous time series
 	newPrev := make(map[string]float64)
 	for host, s := range current {
@@ -188,12 +192,9 @@ func (c *Collector) scrape() {
 			BytesOut:   int64(deltaBytes),
 		}
 
-		c.rrd.Push(host, dp)
-	}
-
-	// If no hosts had metrics yet, still push a zero total so the chart has points
-	if len(current) == 0 {
-		c.rrd.PushTotal(DataPoint{Timestamp: now})
+		if err := c.store.Push(host, dp); err != nil {
+			log.Printf("metrics push error for %s: %v", host, err)
+		}
 	}
 
 	for k, v := range c.prevValues {

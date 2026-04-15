@@ -119,7 +119,7 @@ func (d *Daemon) Start() error {
 	}
 
 	// Start metrics collector
-	d.collector = metrics.NewCollector()
+	d.collector = metrics.NewCollector(database.DB)
 	d.collector.Start()
 
 	// Start log buffer and tailer

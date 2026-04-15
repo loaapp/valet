@@ -33,6 +33,15 @@ var migrations = []struct {
 	{5, `ALTER TABLE routes ADD COLUMN handler_config TEXT NOT NULL DEFAULT ''`},
 	{6, `ALTER TABLE routes ADD COLUMN template TEXT NOT NULL DEFAULT ''`},
 	{7, `ALTER TABLE routes ADD COLUMN description TEXT NOT NULL DEFAULT ''`},
+	{8, `CREATE TABLE IF NOT EXISTS metrics (
+		ts         INTEGER NOT NULL,
+		host       TEXT NOT NULL,
+		reqs       INTEGER NOT NULL DEFAULT 0,
+		errs       INTEGER NOT NULL DEFAULT 0,
+		latency_ms REAL NOT NULL DEFAULT 0,
+		bytes_out  INTEGER NOT NULL DEFAULT 0
+	)`},
+	{9, `CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts)`},
 }
 
 func Migrate(db *sql.DB) error {

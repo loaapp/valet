@@ -603,7 +603,11 @@ func (s *Server) handleMetricsCurrent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{})
 		return
 	}
-	current := s.collector.RRD().GetCurrent()
+	current, err := s.collector.Store().GetCurrent()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, current)
 }
 
@@ -617,41 +621,32 @@ func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 	if rangeStr == "" {
 		rangeStr = "5m"
 	}
-	route := r.URL.Query().Get("route")
 
-	rrd := s.collector.RRD()
-
-	if route != "" {
-		points, resolution := rrd.GetHistoryFiltered(route, rangeStr)
-		totals, _ := rrd.GetTotals(rangeStr)
-		writeJSON(w, http.StatusOK, map[string]any{
-			"resolution": resolution,
-			"routes":     map[string]any{route: points},
-			"totals":     totals,
-		})
+	store := s.collector.Store()
+	totals, perRoute, err := store.GetHistory(rangeStr)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	// All routes
-	current := rrd.GetCurrent()
-	routeData := make(map[string]any, len(current))
 	var resolution string
-	for host := range current {
-		points, res := rrd.GetHistoryFiltered(host, rangeStr)
+	switch rangeStr {
+	case "1h":
+		resolution = "1m"
+	case "24h":
+		resolution = "1h"
+	default:
+		resolution = "1s"
+	}
+
+	if totals == nil {
+		totals = []metrics.DataPoint{}
+	}
+	routeData := make(map[string]any, len(perRoute))
+	for host, points := range perRoute {
 		routeData[host] = points
-		resolution = res
 	}
-	if resolution == "" {
-		switch rangeStr {
-		case "1h":
-			resolution = "1m"
-		case "24h":
-			resolution = "1h"
-		default:
-			resolution = "1s"
-		}
-	}
-	totals, _ := rrd.GetTotals(rangeStr)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"resolution": resolution,
 		"routes":     routeData,

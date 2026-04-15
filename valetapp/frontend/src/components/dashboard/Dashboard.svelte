@@ -3,7 +3,12 @@
   import { getStatus, isConnected, refreshStatus } from '../../lib/stores/status.svelte.js';
   import { getCurrentMetrics, getHistoryData, getSelectedRange, setSelectedRange, startPolling as startMetricsPolling, stopPolling as stopMetricsPolling } from '../../lib/stores/metrics.svelte.js';
   import { Trust } from '../../../wailsjs/go/api/StatusService.js';
+  import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip, Legend } from 'chart.js';
 
+  Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip, Legend);
+
+  let chartCanvas;
+  let chartInstance = null;
   let chartTimer = null;
 
   async function handleTrust() {
@@ -64,38 +69,76 @@
       .sort((a, b) => b.reqs - a.reqs);
   }
 
-  // Build SVG path from history totals
-  function getChartPath() {
+  function updateChart() {
     const h = getHistoryData();
-    if (!h || !Array.isArray(h.totals) || h.totals.length < 2) return { path: '', fill: '', maxVal: 0, points: [] };
+    if (!chartCanvas || !h || !Array.isArray(h.totals) || h.totals.length < 2) return;
 
-    const totals = h.totals;
-    const maxReqs = Math.max(...totals.map(p => p.reqs || 0), 1);
-    const w = 100; // viewBox width percentage
-    const ht = 100; // viewBox height percentage
-    const padding = 2;
-
-    const points = totals.map((p, i) => {
-      const x = padding + (i / (totals.length - 1)) * (w - padding * 2);
-      const y = ht - padding - ((p.reqs || 0) / maxReqs) * (ht - padding * 2);
-      return { x, y, reqs: p.reqs || 0, ts: p.ts };
+    const labels = h.totals.map(p => {
+      const d = new Date(p.ts * 1000);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     });
+    const data = h.totals.map(p => p.reqs || 0);
 
-    const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
-    const fillPath = `${linePath} L${points[points.length-1].x},${ht} L${points[0].x},${ht} Z`;
+    if (chartInstance) {
+      chartInstance.data.labels = labels;
+      chartInstance.data.datasets[0].data = data;
+      chartInstance.update('none');
+      return;
+    }
 
-    return { path: linePath, fill: fillPath, maxVal: maxReqs, points };
+    chartInstance = new Chart(chartCanvas, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Requests',
+          data,
+          borderColor: '#007AFF',
+          backgroundColor: 'rgba(0, 122, 255, 0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: {
+          tooltip: { mode: 'index', intersect: false },
+          legend: { display: false },
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(128,128,128,0.15)' },
+            ticks: { color: '#888', maxTicksLimit: 8, font: { size: 10 } },
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: 'rgba(128,128,128,0.15)' },
+            ticks: { color: '#888', font: { size: 10 } },
+          },
+        },
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      },
+    });
   }
 
-  function formatTime(ts) {
-    const d = new Date(ts * 1000);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  function hasChartData() {
+    const h = getHistoryData();
+    return h && Array.isArray(h.totals) && h.totals.length >= 2;
   }
 
   onMount(() => {
     startMetricsPolling();
+    chartTimer = setInterval(updateChart, 3000);
+    // Initial render after a short delay to let first poll complete
+    setTimeout(updateChart, 500);
     return () => {
       stopMetricsPolling();
+      if (chartTimer) clearInterval(chartTimer);
+      if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
     };
   });
 </script>
@@ -150,16 +193,8 @@
       </div>
     </div>
     <div class="chart-container">
-      {#if getChartPath().points.length >= 2}
-        {@const chart = getChartPath()}
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" class="chart-svg">
-          <path d={chart.fill} fill="rgba(0,122,255,0.08)" />
-          <path d={chart.path} fill="none" stroke="#007AFF" stroke-width="0.5" vector-effect="non-scaling-stroke" />
-        </svg>
-        <div class="chart-labels">
-          <span class="chart-label-max">{chart.maxVal} req/s</span>
-          <span class="chart-label-zero">0</span>
-        </div>
+      {#if hasChartData()}
+        <canvas bind:this={chartCanvas} height="180"></canvas>
       {:else}
         <div class="chart-empty">Waiting for data...</div>
       {/if}
@@ -283,25 +318,6 @@
     width: 100%;
     height: 180px;
     position: relative;
-  }
-  .chart-svg {
-    width: 100%;
-    height: 100%;
-  }
-  .chart-labels {
-    position: absolute;
-    top: 0;
-    right: 8px;
-    bottom: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    pointer-events: none;
-  }
-  .chart-label-max, .chart-label-zero {
-    font-size: 10px;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
   }
   .chart-empty {
     display: flex;
