@@ -65,7 +65,7 @@ func serveCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&apiAddr, "api", ":7800", "API listen address")
-	cmd.Flags().StringVar(&dnsAddr, "dns", ":53", "DNS listen address (empty to disable)")
+	cmd.Flags().StringVar(&dnsAddr, "dns", ":15353", "DNS listen address (empty to disable)")
 	return cmd
 }
 

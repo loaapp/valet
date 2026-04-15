@@ -128,7 +128,7 @@ func (d *Daemon) Start() error {
 	d.tailer.Start()
 
 	// Start API server
-	d.apiServer = server.New(d.config.APIAddr, database.DB, d.routeMgr, d.certMgr, d.collector, d.logBuf)
+	d.apiServer = server.New(d.config.APIAddr, database.DB, d.routeMgr, d.certMgr, d.collector, d.logBuf, d.dnsServer)
 	if err := d.apiServer.Start(); err != nil {
 		return fmt.Errorf("start API server: %w", err)
 	}

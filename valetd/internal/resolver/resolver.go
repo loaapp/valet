@@ -7,10 +7,13 @@ import (
 	"runtime"
 )
 
-const resolverDir = "/etc/resolver"
+const (
+	resolverDir = "/etc/resolver"
+	DNSPort     = 15353
+)
 
-// Install creates a resolver file for the given TLD so that macOS
-// sends DNS queries for *.tld to 127.0.0.1.
+// Install creates a resolver file for the given domain/TLD so that macOS
+// sends DNS queries to 127.0.0.1 on the Valet DNS port.
 // Requires root privileges.
 func Install(tld string) error {
 	if runtime.GOOS != "darwin" {
@@ -21,10 +24,10 @@ func Install(tld string) error {
 		return fmt.Errorf("create resolver dir: %w", err)
 	}
 
-	content := "nameserver 127.0.0.1\n"
+	content := fmt.Sprintf("nameserver 127.0.0.1\nport %d\n", DNSPort)
 	path := filepath.Join(resolverDir, tld)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("write resolver file for .%s: %w", tld, err)
+		return fmt.Errorf("write resolver file for %s: %w", tld, err)
 	}
 
 	return nil

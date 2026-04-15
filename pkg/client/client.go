@@ -53,6 +53,15 @@ func (c *Client) GetDNSStatus() ([]map[string]any, error) {
 	return result, nil
 }
 
+func (c *Client) GetDNSLogs(limit int) ([]map[string]any, error) {
+	path := fmt.Sprintf("/api/v1/dns/logs?limit=%d", limit)
+	var result []map[string]any
+	if err := c.get(path, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // Routes
 
 func (c *Client) ListRoutes() ([]models.Route, error) {

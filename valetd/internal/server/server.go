@@ -17,6 +17,7 @@ import (
 	"github.com/loaapp/valet/valetd/internal/caddy"
 	"github.com/loaapp/valet/valetd/internal/certs"
 	"github.com/loaapp/valet/valetd/internal/db"
+	"github.com/loaapp/valet/valetd/internal/dns"
 	"github.com/loaapp/valet/valetd/internal/logbuf"
 	"github.com/loaapp/valet/valetd/internal/metrics"
 	"github.com/loaapp/valet/valetd/internal/resolver"
@@ -31,15 +32,17 @@ type Server struct {
 	certMgr    *certs.Manager
 	collector  *metrics.Collector
 	logBuf     *logbuf.RingBuffer
+	dnsServer  *dns.Server
 }
 
-func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs.Manager, collector *metrics.Collector, logBuf *logbuf.RingBuffer) *Server {
+func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs.Manager, collector *metrics.Collector, logBuf *logbuf.RingBuffer, dnsServer *dns.Server) *Server {
 	s := &Server{
 		database:  database,
 		routeMgr:  routeMgr,
 		certMgr:   certMgr,
 		collector: collector,
 		logBuf:    logBuf,
+		dnsServer: dnsServer,
 	}
 
 	mux := http.NewServeMux()
@@ -58,6 +61,7 @@ func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs
 	mux.HandleFunc("GET /api/v1/metrics/current", s.handleMetricsCurrent)
 	mux.HandleFunc("GET /api/v1/metrics/history", s.handleMetricsHistory)
 	mux.HandleFunc("GET /api/v1/logs", s.handleLogs)
+	mux.HandleFunc("GET /api/v1/dns/logs", s.handleDNSLogs)
 	mux.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	mux.HandleFunc("PUT /api/v1/settings/{key}", s.handleSetSetting)
 
@@ -456,31 +460,6 @@ func (s *Server) handleDeleteTLD(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-func (s *Server) handleDNSStatus(w http.ResponseWriter, r *http.Request) {
-	tlds, err := db.ListTLDs(s.database)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	type tldStatus struct {
-		TLD       string `json:"tld"`
-		Installed bool   `json:"installed"`
-	}
-
-	var result []tldStatus
-	for _, t := range tlds {
-		result = append(result, tldStatus{
-			TLD:       t.TLD,
-			Installed: resolver.IsInstalled(t.TLD),
-		})
-	}
-	if result == nil {
-		result = []tldStatus{}
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
 // --- Settings ---
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -704,6 +683,50 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []logbuf.LogEntry{}
 	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+// --- DNS ---
+
+func (s *Server) handleDNSStatus(w http.ResponseWriter, r *http.Request) {
+	tlds, err := db.ListTLDs(s.database)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	type tldStatus struct {
+		TLD       string `json:"tld"`
+		Installed bool   `json:"installed"`
+	}
+
+	var result []tldStatus
+	for _, t := range tlds {
+		result = append(result, tldStatus{
+			TLD:       t.TLD,
+			Installed: resolver.IsInstalled(t.TLD),
+		})
+	}
+	if result == nil {
+		result = []tldStatus{}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleDNSLogs(w http.ResponseWriter, r *http.Request) {
+	if s.dnsServer == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+
+	entries := s.dnsServer.QueryLogs().Last(limit)
 	writeJSON(w, http.StatusOK, entries)
 }
 
