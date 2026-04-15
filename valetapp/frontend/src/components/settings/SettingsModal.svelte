@@ -142,7 +142,7 @@
                   <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
                 <p>No managed TLDs configured yet.</p>
-                <p class="hint">Close this dialog and go to <strong>TLDs</strong> in the sidebar to add one (e.g. <code>.test</code>), then come back here to install the DNS resolver.</p>
+                <p class="hint">Run <code>sudo valetd tld add --tld test</code> to register a TLD and install its DNS resolver in one step.</p>
               </div>
             {:else}
               <div class="dns-table">
@@ -158,13 +158,13 @@
             {/if}
 
             <div class="dns-instructions">
-              <h4>Installation</h4>
-              <p class="hint">Run this command once to install DNS resolvers for all managed TLDs:</p>
-              <code class="dns-command">sudo valetd dns install</code>
-              <p class="hint" style="margin-top: 0.75rem">To remove resolvers:</p>
-              <code class="dns-command">sudo valetd dns uninstall</code>
-              <p class="hint" style="margin-top: 0.75rem">To check status from the command line:</p>
-              <code class="dns-command">valetd dns status</code>
+              <h4>Managing TLDs</h4>
+              <p class="hint">Add a TLD and install its DNS resolver in one step:</p>
+              <code class="dns-command">sudo valetd tld add --tld test</code>
+              <p class="hint" style="margin-top: 0.75rem">Remove a TLD and its resolver:</p>
+              <code class="dns-command">sudo valetd tld remove --tld test</code>
+              <p class="hint" style="margin-top: 0.75rem">Check status:</p>
+              <code class="dns-command">valetd tld list</code>
             </div>
           </div>
           {/if}

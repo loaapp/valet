@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/loaapp/valet/valetd/internal/certs"
@@ -28,7 +29,7 @@ func main() {
 
 	root.AddCommand(serveCmd())
 	root.AddCommand(mcpCmd())
-	root.AddCommand(dnsCmd())
+	root.AddCommand(tldCmd())
 
 	// Default to serve if no subcommand given
 	root.RunE = serveCmd().RunE
@@ -109,76 +110,115 @@ func mcpCmd() *cobra.Command {
 	}
 }
 
-func dnsCmd() *cobra.Command {
-	dnsRoot := &cobra.Command{
-		Use:   "dns",
-		Short: "Manage DNS resolvers",
+func tldCmd() *cobra.Command {
+	tldRoot := &cobra.Command{
+		Use:   "tld",
+		Short: "Manage TLDs and DNS resolvers",
 	}
 
-	dnsRoot.AddCommand(&cobra.Command{
-		Use:   "install",
-		Short: "Install /etc/resolver/ files for all managed TLDs (requires sudo)",
+	addCmd := &cobra.Command{
+		Use:   "add",
+		Short: "Register a managed TLD and install its DNS resolver (requires sudo)",
+		Example: "  sudo valetd tld add --tld test\n  sudo valetd tld add --tld dev",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTLDs(func(database *db.AppDB, tlds []db.ManagedTLD) error {
-				if len(tlds) == 0 {
-					fmt.Println("No managed TLDs configured. Add one first with: valet tld add <tld>")
-					return nil
-				}
-				for _, t := range tlds {
-					if err := resolver.Install(t.TLD); err != nil {
-						fmt.Fprintf(os.Stderr, "Failed to install resolver for .%s: %v\n", t.TLD, err)
-					} else {
-						db.UpdateTLDResolver(database.DB, t.TLD, true)
-						fmt.Printf("Installed /etc/resolver/%s\n", t.TLD)
-					}
-				}
-				fmt.Println("Done. DNS resolvers installed.")
-				return nil
-			})
-		},
-	})
+			tld, _ := cmd.Flags().GetString("tld")
+			tld = strings.TrimPrefix(tld, ".")
+			if tld == "" {
+				return fmt.Errorf("--tld is required (e.g., --tld test)")
+			}
 
-	dnsRoot.AddCommand(&cobra.Command{
-		Use:   "uninstall",
-		Short: "Remove /etc/resolver/ files for all managed TLDs (requires sudo)",
+			database, err := db.Open()
+			if err != nil {
+				return fmt.Errorf("open database: %w", err)
+			}
+			defer database.Close()
+
+			// Register in database
+			existing, _ := db.GetTLD(database.DB, tld)
+			if existing == nil {
+				if _, err := db.CreateTLD(database.DB, tld); err != nil {
+					return fmt.Errorf("register TLD: %w", err)
+				}
+				fmt.Printf("Registered .%s in database\n", tld)
+			} else {
+				fmt.Printf(".%s already registered in database\n", tld)
+			}
+
+			// Install resolver file
+			if err := resolver.Install(tld); err != nil {
+				return fmt.Errorf("install resolver for .%s: %w", tld, err)
+			}
+			db.UpdateTLDResolver(database.DB, tld, true)
+			fmt.Printf("Installed /etc/resolver/%s\n", tld)
+			fmt.Printf("Done. All *.%s domains will resolve to 127.0.0.1\n", tld)
+			return nil
+		},
+	}
+	addCmd.Flags().String("tld", "", "TLD to add (e.g., test, dev, local)")
+	addCmd.MarkFlagRequired("tld")
+	tldRoot.AddCommand(addCmd)
+
+	removeCmd := &cobra.Command{
+		Use:   "remove",
+		Short: "Unregister a managed TLD and remove its DNS resolver (requires sudo)",
+		Example: "  sudo valetd tld remove --tld test",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTLDs(func(database *db.AppDB, tlds []db.ManagedTLD) error {
-				for _, t := range tlds {
-					if err := resolver.Remove(t.TLD); err != nil {
-						fmt.Fprintf(os.Stderr, "Failed to remove resolver for .%s: %v\n", t.TLD, err)
-					} else {
-						db.UpdateTLDResolver(database.DB, t.TLD, false)
-						fmt.Printf("Removed /etc/resolver/%s\n", t.TLD)
-					}
-				}
-				fmt.Println("Done. DNS resolvers removed.")
-				return nil
-			})
-		},
-	})
+			tld, _ := cmd.Flags().GetString("tld")
+			tld = strings.TrimPrefix(tld, ".")
+			if tld == "" {
+				return fmt.Errorf("--tld is required")
+			}
 
-	dnsRoot.AddCommand(&cobra.Command{
-		Use:   "status",
-		Short: "Show DNS resolver status for all managed TLDs",
+			database, err := db.Open()
+			if err != nil {
+				return fmt.Errorf("open database: %w", err)
+			}
+			defer database.Close()
+
+			// Remove resolver file
+			if err := resolver.Remove(tld); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to remove resolver for .%s: %v\n", tld, err)
+			} else {
+				fmt.Printf("Removed /etc/resolver/%s\n", tld)
+			}
+
+			// Remove from database
+			db.UpdateTLDResolver(database.DB, tld, false)
+			if err := db.DeleteTLD(database.DB, tld); err != nil {
+				return fmt.Errorf("remove TLD from database: %w", err)
+			}
+			fmt.Printf("Unregistered .%s\n", tld)
+			return nil
+		},
+	}
+	removeCmd.Flags().String("tld", "", "TLD to remove")
+	removeCmd.MarkFlagRequired("tld")
+	tldRoot.AddCommand(removeCmd)
+
+	tldRoot.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "Show all managed TLDs and resolver status",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withTLDs(func(database *db.AppDB, tlds []db.ManagedTLD) error {
 				if len(tlds) == 0 {
 					fmt.Println("No managed TLDs configured.")
+					fmt.Println("Add one with: sudo valetd tld add --tld test")
 					return nil
 				}
+				fmt.Printf("%-12s %s\n", "TLD", "RESOLVER")
 				for _, t := range tlds {
 					status := "not installed"
 					if resolver.IsInstalled(t.TLD) {
 						status = "installed"
 					}
-					fmt.Printf(".%-10s %s\n", t.TLD, status)
+					fmt.Printf(".%-11s %s\n", t.TLD, status)
 				}
 				return nil
 			})
 		},
 	})
 
-	return dnsRoot
+	return tldRoot
 }
 
 // withTLDs opens the database, loads TLDs, and calls fn.
