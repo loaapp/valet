@@ -7,12 +7,14 @@
     { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
     { id: 'routes', label: 'Routes', icon: 'route' },
     { id: 'tlds', label: 'TLDs', icon: 'globe' },
+    { id: 'assistant', label: 'Assistant', icon: 'chat' },
   ];
 
   const icons = {
     grid: 'M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 0h6v6h-6v-6z',
     route: 'M13 3v18M3 8l4-4 4 4M17 16l4 4-4 4',
     globe: 'M12 2a10 10 0 100 20 10 10 0 000-20zm0 2c1.66 0 3.14 2.69 3.5 6.5H8.5C8.86 6.69 10.34 4 12 4zm0 16c-1.66 0-3.14-2.69-3.5-6.5h7c-.36 3.81-1.84 6.5-3.5 6.5zM2.05 13h4.46c.1 1.38.35 2.66.72 3.78A10.03 10.03 0 012.05 13zm0-2a10.03 10.03 0 015.18-3.78A14.8 14.8 0 006.51 11H2.05zm19.9 0h-4.46c-.1-1.38-.35-2.66-.72-3.78A10.03 10.03 0 0121.95 11zm0 2a10.03 10.03 0 01-5.18 3.78c.37-1.12.62-2.4.72-3.78h4.46z',
+    chat: 'M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z',
   };
 </script>
 

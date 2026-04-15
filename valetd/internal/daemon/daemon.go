@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,22 +14,26 @@ import (
 	"github.com/loaapp/valet/valetd/internal/certs"
 	"github.com/loaapp/valet/valetd/internal/db"
 	"github.com/loaapp/valet/valetd/internal/dns"
+	"github.com/loaapp/valet/valetd/internal/mcpserver"
 	"github.com/loaapp/valet/valetd/internal/routes"
 	"github.com/loaapp/valet/valetd/internal/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type Config struct {
 	APIAddr string // e.g., ":7800"
 	DNSAddr string // e.g., ":53"
+	MCPAddr string // e.g., ":7801" — MCP HTTP endpoint
 }
 
 type Daemon struct {
-	config    Config
-	database  *db.AppDB
-	dnsServer *dns.Server
-	apiServer *server.Server
-	routeMgr  *routes.Manager
-	certMgr   *certs.Manager
+	config      Config
+	database    *db.AppDB
+	dnsServer   *dns.Server
+	apiServer   *server.Server
+	routeMgr    *routes.Manager
+	certMgr     *certs.Manager
+	mcpHTTP     *http.Server
 }
 
 func New(cfg Config) *Daemon {
@@ -98,6 +104,26 @@ func (d *Daemon) Start() error {
 		return fmt.Errorf("start API server: %w", err)
 	}
 
+	// MCP HTTP server
+	mcpAddr := d.config.MCPAddr
+	if mcpAddr == "" {
+		mcpAddr = ":7801"
+	}
+	mcpSrv := mcpserver.New(d.database.DB, d.routeMgr, d.certMgr)
+	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		return mcpSrv.Server()
+	}, nil)
+	d.mcpHTTP = &http.Server{
+		Addr:    mcpAddr,
+		Handler: handler,
+	}
+	go func() {
+		log.Printf("MCP HTTP server listening on %s", mcpAddr)
+		if err := d.mcpHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("MCP HTTP server error: %v", err)
+		}
+	}()
+
 	// Write PID file
 	if err := writePID(); err != nil {
 		log.Printf("Warning: failed to write PID file: %v", err)
@@ -110,6 +136,10 @@ func (d *Daemon) Start() error {
 // Stop gracefully shuts down all components.
 func (d *Daemon) Stop() {
 	log.Println("Stopping valetd...")
+
+	if d.mcpHTTP != nil {
+		d.mcpHTTP.Shutdown(context.Background())
+	}
 
 	if d.apiServer != nil {
 		d.apiServer.Stop()

@@ -1,18 +1,31 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 
+	"github.com/loaapp/valet/valetd/internal/certs"
 	"github.com/loaapp/valet/valetd/internal/daemon"
 	"github.com/loaapp/valet/valetd/internal/db"
+	"github.com/loaapp/valet/valetd/internal/dns"
+	"github.com/loaapp/valet/valetd/internal/mcpserver"
+	"github.com/loaapp/valet/valetd/internal/routes"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func main() {
+	// Handle "mcp" subcommand before flag parsing.
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		runMCP()
+		return
+	}
+
 	apiAddr := flag.String("api", ":7800", "API listen address")
 	dnsAddr := flag.String("dns", ":53", "DNS listen address (empty to disable)")
 	flag.Parse()
@@ -35,6 +48,49 @@ func main() {
 	<-sig
 
 	d.Stop()
+}
+
+func runMCP() {
+	database, err := db.Open()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	certMgr, err := certs.NewManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to init cert manager: %v\n", err)
+		os.Exit(1)
+	}
+
+	dnsServer := dns.NewServer()
+	routeMgr := routes.NewManager(database.DB, certMgr, dnsServer)
+
+	mcpSrv := mcpserver.New(database.DB, routeMgr, certMgr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle shutdown signals.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sig
+		cancel()
+	}()
+
+	session, err := mcpSrv.Server().Connect(ctx, &mcp.StdioTransport{}, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "MCP connect error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Block until the session ends.
+	if err := session.Wait(); err != nil {
+		fmt.Fprintf(os.Stderr, "MCP session error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func setupLogging() {

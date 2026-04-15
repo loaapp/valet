@@ -20,6 +20,7 @@ func main() {
 	routeSvc := api.NewRouteService(c)
 	tldSvc := api.NewTLDService(c)
 	settingsSvc := api.NewSettingsService(c)
+	agentSvc := api.NewAgentService()
 
 	err := wails.Run(&options.App{
 		Title:  "Valet",
@@ -34,12 +35,14 @@ func main() {
 			routeSvc.SetContext(ctx)
 			tldSvc.SetContext(ctx)
 			settingsSvc.SetContext(ctx)
+			agentSvc.SetContext(ctx)
 		},
 		Bind: []interface{}{
 			statusSvc,
 			routeSvc,
 			tldSvc,
 			settingsSvc,
+			agentSvc,
 		},
 	})
 

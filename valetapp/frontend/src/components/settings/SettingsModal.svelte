@@ -4,9 +4,14 @@
 
   let { open = $bindable(false) } = $props();
 
+  let tab = $state('appearance');
   const settings = $derived(getSettings());
 
   function close() { open = false; }
+
+  function saveModel(field, value) {
+    setSetting(field, value);
+  }
 </script>
 
 {#if open}
@@ -19,10 +24,12 @@
 
       <div class="modal-body">
         <nav class="tabs">
-          <button class="active">Appearance</button>
+          <button class:active={tab === 'appearance'} onclick={() => tab = 'appearance'}>Appearance</button>
+          <button class:active={tab === 'model'} onclick={() => tab = 'model'}>AI Model</button>
         </nav>
 
         <div class="tab-content">
+          {#if tab === 'appearance'}
           <div class="section">
             <h3>Theme</h3>
             <div class="theme-grid">
@@ -57,6 +64,57 @@
               {/each}
             </div>
           </div>
+
+          {:else if tab === 'model'}
+          <div class="section">
+            <h3>AI Model Configuration</h3>
+            <p class="hint">Configure an OpenAI-compatible endpoint for the AI assistant. Works with Ollama, vLLM, LiteLLM, or any compatible API.</p>
+
+            <div class="model-form">
+              <label class="model-field">
+                <span>Base URL</span>
+                <input type="text"
+                  value={settings.model_base_url || ''}
+                  onchange={(e) => saveModel('model_base_url', e.target.value)}
+                  placeholder="http://localhost:11434/v1"
+                  spellcheck="false"
+                />
+              </label>
+              <label class="model-field">
+                <span>Model ID</span>
+                <input type="text"
+                  value={settings.model_id || ''}
+                  onchange={(e) => saveModel('model_id', e.target.value)}
+                  placeholder="llama3.1"
+                  spellcheck="false"
+                />
+              </label>
+              <label class="model-field">
+                <span>API Key</span>
+                <input type="password"
+                  value={settings.model_api_key || ''}
+                  onchange={(e) => saveModel('model_api_key', e.target.value)}
+                  placeholder="Optional (not needed for Ollama)"
+                  spellcheck="false"
+                />
+              </label>
+            </div>
+
+            <div class="presets">
+              <span class="preset-label">Quick setup:</span>
+              <button class="btn btn-sm" onclick={() => {
+                saveModel('model_base_url', 'http://localhost:11434/v1');
+                saveModel('model_id', 'llama3.1');
+                saveModel('model_api_key', '');
+              }}>Ollama (Llama 3.1)</button>
+              <button class="btn btn-sm" onclick={() => {
+                saveModel('model_base_url', 'http://localhost:11434/v1');
+                saveModel('model_id', 'qwen2.5');
+                saveModel('model_api_key', '');
+              }}>Ollama (Qwen 2.5)</button>
+            </div>
+          </div>
+          {/if}
         </div>
       </div>
     </div>
@@ -148,4 +206,18 @@
   }
   .font-option:hover { border-color: var(--text-muted); }
   .font-option.active { border-color: var(--accent); }
+
+  .hint { font-size: 0.8rem; color: var(--text-muted); margin: 0 0 1rem; }
+
+  .model-form { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1rem; }
+  .model-field { display: flex; flex-direction: column; gap: 0.25rem; }
+  .model-field span { font-size: 0.78rem; color: var(--text-secondary); font-weight: 500; }
+  .model-field input {
+    background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 0.45rem 0.6rem; color: var(--text-primary); font-size: 0.85rem; outline: none;
+  }
+  .model-field input:focus { border-color: var(--accent); }
+
+  .presets { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+  .preset-label { font-size: 0.78rem; color: var(--text-muted); }
 </style>
