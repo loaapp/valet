@@ -8,7 +8,7 @@ on:
     branches: [main]
 
 jobs:
-  build-daemon:
+  vet:
     runs-on: ubuntu-latest
     env:
       CGO_ENABLED: 1
@@ -18,22 +18,22 @@ jobs:
         with:
           go-version: 'stable'
           cache-dependency-path: 'valetd/go.sum'
-      - name: Build daemon and CLI
+      - name: Build
         working-directory: valetd
         run: |
-          go build -o ../bin/valetd ./cmd/valetd
-          go build -o ../bin/valet ./cmd/valet
-      - name: Run vet
+          go build ./cmd/valetd
+          go build ./cmd/valet
+      - name: Vet
         run: |
           (cd valetd && go vet ./...)
           (cd pkg && go vet ./...)
-      - uses: actions/upload-artifact@v4
-        with:
-          name: daemon-linux-amd64
-          path: bin/
 
-  build-macos:
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [vet]
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -48,15 +48,12 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
-      # --- Import signing certificates ---
       - name: Install certificates
-        if: github.event_name == 'push'
         env:
           APPLE_CERT_APP: ${{ secrets.APPLE_CERT_APP }}
           APPLE_CERT_INSTALLER: ${{ secrets.APPLE_CERT_INSTALLER }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
         run: |
-          # Create a temporary keychain
           KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
           KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
 
@@ -64,53 +61,34 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Import Application certificate
           APP_P12=$RUNNER_TEMP/app.p12
           echo "$APPLE_CERT_APP" | base64 --decode > "$APP_P12"
           security import "$APP_P12" -P "$APPLE_CERT_PASSWORD" \
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           rm "$APP_P12"
 
-          # Import Installer certificate
           INST_P12=$RUNNER_TEMP/installer.p12
           echo "$APPLE_CERT_INSTALLER" | base64 --decode > "$INST_P12"
           security import "$INST_P12" -P "$APPLE_CERT_PASSWORD" \
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           rm "$INST_P12"
 
-          # Allow codesign/productsign/notarytool to use the keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Prepend temporary keychain to search list
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
 
-      # --- Build + sign + package ---
-      - name: Build signed package
-        if: github.event_name == 'push'
+      - name: Build, sign, and notarize
         env:
-          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-snapshot' }}
+          VERSION: ${{ github.ref_name }}
           APPLE_APP_IDENTITY: ${{ secrets.APPLE_APP_IDENTITY }}
           APPLE_INSTALLER_IDENTITY: ${{ secrets.APPLE_INSTALLER_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
         run: |
-          # Strip leading 'v' from tag (v0.1.0 -> 0.1.0)
           export VERSION="${VERSION#v}"
           ./scripts/build-pkg.sh
 
-      # --- Unsigned build for PRs ---
-      - name: Build app (unsigned)
-        if: github.event_name == 'pull_request'
-        run: |
-          cd valetapp && wails build
-          cd ../valetd
-          go build -o ../valetapp/build/bin/Valet.app/Contents/MacOS/valetd ./cmd/valetd
-          mkdir -p ../valetapp/build/bin/Valet.app/Contents/Resources/bin
-          go build -o ../valetapp/build/bin/Valet.app/Contents/Resources/bin/valet ./cmd/valet
-
-      # --- Cleanup keychain ---
       - name: Cleanup keychain
         if: always()
         run: |
@@ -119,28 +97,8 @@ jobs:
             security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
           fi
 
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push'
-        with:
-          name: valet-macos-pkg
-          path: build/Valet-*.pkg
-      - uses: actions/upload-artifact@v4
-        with:
-          name: valet-macos-app
-          path: valetapp/build/bin/
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-daemon, build-macos]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            daemon-linux-amd64/**
-            valet-macos-pkg/**
+          files: build/Valet-*.pkg
           generate_release_notes: true
