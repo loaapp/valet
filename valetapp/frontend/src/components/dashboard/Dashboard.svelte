@@ -67,11 +67,13 @@
       const d = new Date(p.ts * 1000);
       return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     });
-    const data = h.totals.map(p => p.reqs || 0);
+    const reqs = h.totals.map(p => p.reqs || 0);
+    const latencies = h.totals.map(p => p.latMs || 0);
 
     if (chartInstance) {
       chartInstance.data.labels = labels;
-      chartInstance.data.datasets[0].data = data;
+      chartInstance.data.datasets[0].data = reqs;
+      chartInstance.data.datasets[1].data = latencies;
       chartInstance.update('none');
       return;
     }
@@ -80,16 +82,30 @@
       type: 'line',
       data: {
         labels,
-        datasets: [{
-          label: 'Requests',
-          data,
-          borderColor: '#007AFF',
-          backgroundColor: 'rgba(0, 122, 255, 0.08)',
-          fill: true,
-          tension: 0.3,
-          pointRadius: 0,
-          borderWidth: 2,
-        }],
+        datasets: [
+          {
+            label: 'Requests',
+            data: reqs,
+            borderColor: '#007AFF',
+            backgroundColor: 'rgba(0, 122, 255, 0.06)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 2,
+            yAxisID: 'y',
+          },
+          {
+            label: 'Latency (ms)',
+            data: latencies,
+            borderColor: '#FF9F0A',
+            backgroundColor: 'transparent',
+            fill: false,
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 1.5,
+            yAxisID: 'y1',
+          },
+        ],
       },
       options: {
         responsive: true,
@@ -97,7 +113,7 @@
         animation: false,
         plugins: {
           tooltip: { mode: 'index', intersect: false },
-          legend: { display: false },
+          legend: { display: true, position: 'top', align: 'end', labels: { boxWidth: 12, font: { size: 11 } } },
         },
         scales: {
           x: {
@@ -105,8 +121,19 @@
             ticks: { color: '#888', maxTicksLimit: 8, font: { size: 10 } },
           },
           y: {
+            type: 'linear',
+            position: 'left',
             beginAtZero: true,
+            title: { display: true, text: 'Requests', color: '#007AFF', font: { size: 10 } },
             grid: { color: 'rgba(128,128,128,0.15)' },
+            ticks: { color: '#888', font: { size: 10 } },
+          },
+          y1: {
+            type: 'linear',
+            position: 'right',
+            beginAtZero: true,
+            title: { display: true, text: 'Latency (ms)', color: '#FF9F0A', font: { size: 10 } },
+            grid: { drawOnChartArea: false },
             ticks: { color: '#888', font: { size: 10 } },
           },
         },
@@ -141,10 +168,6 @@
 </script>
 
 <div class="page">
-  <div class="page-header">
-    <h1>Dashboard</h1>
-  </div>
-
   {#if !isConnected()}
     <div class="banner banner-warning">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -154,30 +177,9 @@
     </div>
   {/if}
 
-  <div class="grid">
-    <div class="card">
-      <div class="card-label">Status</div>
-      <div class="card-value" class:text-success={isConnected()} class:text-danger={!isConnected()}>
-        {isConnected() ? (getStatus()?.status ?? 'Running') : 'Disconnected'}
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-label">Total Requests</div>
-      <div class="card-value">{computeTotalRequests()}</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Error Rate</div>
-      <div class="card-value">{computeErrorRate()}</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Avg Latency</div>
-      <div class="card-value">{computeAvgLatency()}</div>
-    </div>
-  </div>
-
   <div class="chart-section">
     <div class="chart-header">
-      <h2>Requests Over Time</h2>
+      <h2>Requests &amp; Latency</h2>
       <div class="range-buttons">
         {#each ['5m', '1h', '24h'] as range}
           <button
@@ -194,6 +196,14 @@
         <div class="chart-overlay">No data for this range</div>
       {/if}
     </div>
+  </div>
+
+  <div class="stats-line">
+    <span class="stat"><strong>{computeTotalRequests()}</strong> requests</span>
+    <span class="stat-sep">&middot;</span>
+    <span class="stat"><strong>{computeErrorRate()}</strong> errors</span>
+    <span class="stat-sep">&middot;</span>
+    <span class="stat"><strong>{computeAvgLatency()}</strong> avg latency</span>
   </div>
 
   {#if getRouteRows().length > 0}
@@ -229,17 +239,6 @@
   .page {
     max-width: 720px;
   }
-  .page-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 20px;
-  }
-  h1 {
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
   h2 {
     font-size: 13px;
     font-weight: 600;
@@ -259,44 +258,12 @@
     color: var(--danger);
     border: 1px solid rgba(255,69,58,0.2);
   }
-  .grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin-bottom: 20px;
-  }
-  .card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
-    box-shadow: var(--shadow);
-  }
-  .card-label {
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 6px;
-  }
-  .card-value {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-  .text-success {
-    color: var(--success);
-  }
-  .text-danger {
-    color: var(--danger);
-  }
   .chart-section {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 16px;
-    margin-bottom: 20px;
+    margin-bottom: 12px;
     box-shadow: var(--shadow);
   }
   .chart-header {
@@ -311,7 +278,7 @@
   }
   .chart-container {
     width: 100%;
-    height: 180px;
+    height: 240px;
     position: relative;
   }
   .chart-overlay {
@@ -324,15 +291,28 @@
     font-size: 12px;
     pointer-events: none;
   }
+  .stats-line {
+    padding: 12px 4px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+  }
+  .stats-line strong {
+    color: var(--text-primary);
+  }
+  .stat-sep {
+    color: var(--text-muted);
+    margin: 0 8px;
+  }
   .table-section {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 16px;
+    padding: 12px;
     box-shadow: var(--shadow);
   }
   .table-section h2 {
-    margin-bottom: 12px;
+    margin-bottom: 8px;
   }
   .table {
     width: 100%;
@@ -341,7 +321,7 @@
   }
   .table th {
     text-align: left;
-    padding: 8px 10px;
+    padding: 6px 10px;
     font-weight: 500;
     color: var(--text-muted);
     border-bottom: 1px solid var(--border);
@@ -350,7 +330,7 @@
     letter-spacing: 0.5px;
   }
   .table td {
-    padding: 8px 10px;
+    padding: 6px 10px;
     border-bottom: 1px solid var(--border-subtle);
     color: var(--text-secondary);
   }

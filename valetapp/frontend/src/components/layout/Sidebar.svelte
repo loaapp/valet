@@ -23,7 +23,6 @@
 <aside class="sidebar">
   <div class="titlebar" style="--wails-draggable: drag;">
     <div class="app-title">
-      <span class="dot" class:connected={isConnected()} class:disconnected={!isConnected()}></span>
       <span>Valet</span>
     </div>
   </div>
@@ -42,6 +41,10 @@
     {/each}
   </nav>
   <div class="sidebar-footer">
+    <div class="daemon-status">
+      <span class="status-dot" class:connected={isConnected()} class:disconnected={!isConnected()}></span>
+      <span class="status-text">{isConnected() ? 'Connected' : 'Disconnected'}</span>
+    </div>
     <button class="nav-item" onclick={onOpenSettings}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z" />
@@ -74,22 +77,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 16px;
+    font-weight: 700;
     color: var(--text-primary);
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-  .dot.connected {
-    background: var(--success);
-    box-shadow: 0 0 6px var(--success);
-  }
-  .dot.disconnected {
-    background: var(--danger);
-    box-shadow: 0 0 6px var(--danger);
   }
   .nav {
     display: flex;
@@ -123,5 +113,30 @@
     margin-top: auto;
     padding: 8px;
     border-top: 1px solid var(--border-subtle);
+  }
+  .daemon-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+  }
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-dot.connected {
+    background: var(--success);
+    box-shadow: 0 0 4px var(--success);
+  }
+  .status-dot.disconnected {
+    background: var(--danger);
+    box-shadow: 0 0 4px var(--danger);
+  }
+  .status-text {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-muted);
   }
 </style>
