@@ -13,6 +13,7 @@ import (
 
 	"github.com/loaapp/valet/pkg/client"
 	"github.com/loaapp/valet/valetapp/internal/api"
+	"github.com/loaapp/valet/valetapp/internal/conversations"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -64,16 +65,22 @@ func ensureDaemon() {
 
 func main() {
 	c := client.New()
+
+	convoStore, err := conversations.New()
+	if err != nil {
+		log.Fatalf("Failed to open conversation store: %v", err)
+	}
+
 	statusSvc := api.NewStatusService(c)
 	routeSvc := api.NewRouteService(c)
 	tldSvc := api.NewTLDService(c)
 	dnsSvc := api.NewDNSService(c)
 	settingsSvc := api.NewSettingsService(c)
-	agentSvc := api.NewAgentService()
+	agentSvc := api.NewAgentService(convoStore)
 	metricsSvc := api.NewMetricsService(c)
 	logsSvc := api.NewLogsService(c)
 
-	err := wails.Run(&options.App{
+	err = wails.Run(&options.App{
 		Title:  "Valet",
 		Width:  900,
 		Height: 620,

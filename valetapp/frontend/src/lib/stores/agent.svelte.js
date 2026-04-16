@@ -1,4 +1,4 @@
-import { SendMessage, StopGeneration } from '../../../wailsjs/go/api/AgentService.js';
+import { SendMessage, StopGeneration, ClearHistory, GetHistory } from '../../../wailsjs/go/api/AgentService.js';
 import { EventsOn } from '../../../wailsjs/runtime/runtime.js';
 import { getSettings, setSetting } from './settings.svelte.js';
 
@@ -60,6 +60,23 @@ export function getIsGenerating() { return isGenerating; }
 export function getStreamingText() { return streamingText; }
 export function getModelConfig() { return modelConfig; }
 
+export async function loadHistory() {
+  try {
+    const history = await GetHistory();
+    if (history && history.length > 0) {
+      messages = history.map(m => ({
+        role: m.role,
+        content: m.content || '',
+        toolName: m.toolName || '',
+        toolArgs: m.toolArgs || '',
+        toolResult: m.toolResult || null,
+      }));
+    }
+  } catch {
+    // Ignore — history might not be available yet
+  }
+}
+
 export function loadModelConfig() {
   const s = getSettings();
   modelConfig = {
@@ -105,6 +122,7 @@ export async function sendMessage(text) {
 export function clearMessages() {
   messages = [];
   streamingText = '';
+  try { ClearHistory(); } catch {}
 }
 
 export async function stopGeneration() {

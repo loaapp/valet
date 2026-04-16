@@ -24,8 +24,9 @@ import (
 )
 
 const (
-	appName = "valet"
-	userID  = "valet-user"
+	appName   = "valet"
+	userID    = "valet-user"
+	sessionID = "session-1"
 
 	systemPrompt = `You are Valet's admin assistant. Valet is a local development reverse proxy that gives developers trusted HTTPS on custom domain names.
 
@@ -41,17 +42,18 @@ Typical workflow: the user registers a TLD via CLI, then uses you to add DNS ent
 Be concise and helpful. When adding a route, always confirm the domain and upstream with the user.`
 )
 
-// Engine manages ADK agent runs.
+// Engine manages ADK agent runs with persistent session history.
 type Engine struct {
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
+	sessSvc session.Service
 }
 
 // RunConfig holds everything needed for an agent run.
 type RunConfig struct {
-	ModelBaseURL string // e.g., "http://localhost:11434/v1" for Ollama
-	ModelID      string // e.g., "llama3.1"
-	APIKey       string // optional
+	ModelBaseURL string
+	ModelID      string
+	APIKey       string
 	UserMessage  string
 	OnToken      func(text string)
 	OnToolCall   func(name string, args string)
@@ -60,17 +62,24 @@ type RunConfig struct {
 	OnError      func(err error)
 }
 
-// NewEngine creates a new agent engine.
+// NewEngine creates a new agent engine with persistent session storage.
 func NewEngine() *Engine {
 	return &Engine{
 		cancels: make(map[string]context.CancelFunc),
+		sessSvc: session.InMemoryService(),
 	}
 }
 
-// Run executes an agent turn through the ADK runner.
+// ClearHistory resets the conversation by creating a new session service.
+func (e *Engine) ClearHistory() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.sessSvc = session.InMemoryService()
+}
+
+// Run executes an agent turn through the ADK runner, using persistent session history.
 func (e *Engine) Run(ctx context.Context, cfg RunConfig) error {
 	ctx, cancel := context.WithCancel(ctx)
-	sessionID := "session-1"
 
 	e.mu.Lock()
 	e.cancels[sessionID] = cancel
@@ -116,12 +125,11 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) error {
 		return err
 	}
 
-	// Create the runner with in-memory sessions
-	sessSvc := session.InMemoryService()
+	// Create the runner with the persistent session service
 	r, err := runner.New(runner.Config{
 		AppName:           appName,
 		Agent:             a,
-		SessionService:    sessSvc,
+		SessionService:    e.sessSvc,
 		AutoCreateSession: true,
 	})
 	if err != nil {
@@ -150,7 +158,6 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) error {
 				continue
 			}
 
-			// Regular text content
 			if part.Text != "" && !part.Thought {
 				if event.Partial {
 					cfg.OnToken(part.Text)
@@ -159,13 +166,11 @@ func (e *Engine) Run(ctx context.Context, cfg RunConfig) error {
 				}
 			}
 
-			// Tool calls
 			if part.FunctionCall != nil {
 				argsJSON, _ := json.Marshal(part.FunctionCall.Args)
 				cfg.OnToolCall(part.FunctionCall.Name, string(argsJSON))
 			}
 
-			// Tool responses
 			if part.FunctionResponse != nil {
 				resp, _ := json.Marshal(part.FunctionResponse.Response)
 				cfg.OnToolResult(part.FunctionResponse.Name, string(resp))

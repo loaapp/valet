@@ -1,3 +1,32 @@
+export namespace conversations {
+	
+	export class Message {
+	    id: number;
+	    ts: number;
+	    role: string;
+	    content: string;
+	    toolName?: string;
+	    toolArgs?: string;
+	    toolResult?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Message(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.ts = source["ts"];
+	        this.role = source["role"];
+	        this.content = source["content"];
+	        this.toolName = source["toolName"];
+	        this.toolArgs = source["toolArgs"];
+	        this.toolResult = source["toolResult"];
+	    }
+	}
+
+}
+
 export namespace models {
 	
 	export class CreateRouteRequest {

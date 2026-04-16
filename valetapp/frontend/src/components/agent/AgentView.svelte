@@ -1,6 +1,6 @@
 <script>
   import { onMount, tick } from 'svelte';
-  import { getMessages, getIsGenerating, getStreamingText, loadModelConfig, clearMessages } from '../../lib/stores/agent.svelte.js';
+  import { getMessages, getIsGenerating, getStreamingText, loadModelConfig, loadHistory, clearMessages } from '../../lib/stores/agent.svelte.js';
   import { renderMarkdown } from '../../lib/markdown.js';
   import AgentInput from './AgentInput.svelte';
 
@@ -8,6 +8,7 @@
 
   onMount(() => {
     loadModelConfig();
+    loadHistory();
   });
 
   async function scrollToBottom() {
