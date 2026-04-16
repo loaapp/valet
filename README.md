@@ -1,14 +1,25 @@
 # Valet
 
-> Trusted HTTPS for local development. DNS management. AI-powered configuration.
+> Stop gluing together mkcert, Caddy, and DNS configs in every repo. Valet does it once, for all your local services.
 
 ![Dashboard](docs/images/dashboard.png)
 
-## What is Valet?
+## The Problem
 
-Valet gives you trusted HTTPS on custom domain names for your local development services — with zero manual configuration. Add a route, get a certificate, hit it in the browser. No more `localhost:3000`.
+Every local dev project needs the same things: trusted HTTPS (so your browser doesn't scream at you), custom domain names (so cookies and CORS actually work), and a reverse proxy (so your frontend and API live on the same origin). You end up wiring together mkcert, Caddy, and `/etc/hosts` — then doing it again in the next project.
 
-Manage everything from a native macOS app, the command line, or an AI assistant that can set up your entire dev environment in one conversation.
+It gets worse when you have multiple services. They all want port 443. You need proxy rules, path routing, cert regeneration, DNS overrides. What should be a 5-minute setup turns into an hour of remembering Caddy config syntax, debugging certificate trust chains, and hand-editing hosts files.
+
+## The Solution
+
+Valet handles all of this in one place. Add a route, get a trusted cert, hit it in the browser. Every service gets its own domain on `:443` — no port conflicts, no `localhost:8080`.
+
+- **Trusted HTTPS** — Automatic mkcert certificates trusted by your browser. No more `thisisunsafe`.
+- **DNS override** — Point any domain to localhost. Swap a production API for a local one without touching your app config.
+- **Reverse proxy** — Unify your frontend dev server and backend under a single domain. SPA + API routing in one click.
+- **One port to rule them all** — All your services on `:443`, differentiated by hostname. No more remembering which port goes where.
+
+What used to take hours of glue code is now minutes in a GUI or a single CLI command.
 
 ## Features
 
