@@ -15,7 +15,7 @@ import (
 
 	"github.com/loaapp/valet/valetd/internal/certs"
 	"github.com/loaapp/valet/valetd/internal/db"
-	"github.com/loaapp/valet/valetd/internal/resolver"
+	"github.com/loaapp/valet/valetd/internal/dns"
 	"github.com/loaapp/valet/valetd/internal/routes"
 	"github.com/loaapp/valet/valetd/internal/templates"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -23,18 +23,20 @@ import (
 
 // MCPServer wraps an MCP server with valetd tools.
 type MCPServer struct {
-	db       *sql.DB
-	routeMgr *routes.Manager
-	certMgr  *certs.Manager
-	server   *mcp.Server
+	db        *sql.DB
+	routeMgr  *routes.Manager
+	certMgr   *certs.Manager
+	dnsServer *dns.Server
+	server    *mcp.Server
 }
 
 // New creates a new MCPServer with all tools registered.
-func New(database *sql.DB, routeMgr *routes.Manager, certMgr *certs.Manager) *MCPServer {
+func New(database *sql.DB, routeMgr *routes.Manager, certMgr *certs.Manager, dnsServer *dns.Server) *MCPServer {
 	s := &MCPServer{
-		db:       database,
-		routeMgr: routeMgr,
-		certMgr:  certMgr,
+		db:        database,
+		routeMgr:  routeMgr,
+		certMgr:   certMgr,
+		dnsServer: dnsServer,
 	}
 	s.server = mcp.NewServer(&mcp.Implementation{
 		Name:    "valetd",
@@ -78,12 +80,12 @@ func (s *MCPServer) registerTools() {
 	s.addUpdateRoute()
 	s.addGetStatus()
 	s.addListTLDs()
-	s.addAddTLD()
-	s.addRemoveTLD()
 	s.addListTemplates()
 	s.addPreviewRoute()
 	s.addDiagnoseRoute()
-	s.addTrust()
+	s.addListDNSEntries()
+	s.addAddDNSEntry()
+	s.addRemoveDNSEntry()
 }
 
 // --- list_routes ---
@@ -301,65 +303,7 @@ func (s *MCPServer) addListTLDs() {
 	)
 }
 
-// --- add_tld ---
-
-type addTLDInput struct {
-	TLD string `json:"tld" jsonschema:"top-level domain to add (e.g. test)"`
-}
-
-func (s *MCPServer) addAddTLD() {
-	mcp.AddTool(s.server, &mcp.Tool{
-		Name:        "add_tld",
-		Description: "Add a managed TLD",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input addTLDInput) (*mcp.CallToolResult, any, error) {
-		tld, err := db.CreateTLD(s.db, input.TLD)
-		if err != nil {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
-				IsError: true,
-			}, nil, nil
-		}
-		if err := s.routeMgr.SyncDNS(); err != nil {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error syncing DNS: %v", err)}},
-				IsError: true,
-			}, nil, nil
-		}
-		return nil, tld, nil
-	})
-}
-
-// --- remove_tld ---
-
-type removeTLDInput struct {
-	TLD string `json:"tld" jsonschema:"top-level domain to remove"`
-}
-
-func (s *MCPServer) addRemoveTLD() {
-	mcp.AddTool(s.server, &mcp.Tool{
-		Name:        "remove_tld",
-		Description: "Remove a managed TLD",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input removeTLDInput) (*mcp.CallToolResult, any, error) {
-		if err := db.DeleteTLD(s.db, input.TLD); err != nil {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
-				IsError: true,
-			}, nil, nil
-		}
-		// Best-effort remove resolver file
-		_ = resolver.Remove(input.TLD)
-
-		if err := s.routeMgr.SyncDNS(); err != nil {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error syncing DNS: %v", err)}},
-				IsError: true,
-			}, nil, nil
-		}
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("TLD .%s removed", input.TLD)}},
-		}, nil, nil
-	})
-}
+// add_tld, remove_tld, trust removed — TLD management requires sudo via CLI (valetd tld add/remove)
 
 // --- list_templates ---
 
@@ -565,44 +509,98 @@ func (s *MCPServer) addDiagnoseRoute() {
 	})
 }
 
-// --- trust ---
+// trust removed — resolver installation requires sudo via CLI (valetd tld add)
 
-func (s *MCPServer) addTrust() {
+// --- list_dns_entries ---
+
+func (s *MCPServer) addListDNSEntries() {
 	s.server.AddTool(
 		&mcp.Tool{
-			Name:        "trust",
-			Description: "Install macOS resolver files for all managed TLDs",
+			Name:        "list_dns_entries",
+			Description: "List all registered DNS entries (subdomains within managed TLDs)",
 			InputSchema: json.RawMessage(`{"type":"object"}`),
 		},
 		func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			tlds, err := db.ListTLDs(s.db)
+			entries, err := db.ListDNSEntries(s.db)
 			if err != nil {
 				return errResult(err)
 			}
-			var installed []string
-			var errors []string
-			for _, t := range tlds {
-				if err := resolver.Install(t.TLD); err != nil {
-					errors = append(errors, fmt.Sprintf(".%s: %v", t.TLD, err))
-				} else {
-					installed = append(installed, "."+t.TLD)
-					_ = db.UpdateTLDResolver(s.db, t.TLD, true)
-				}
-			}
-			var sb strings.Builder
-			if len(installed) > 0 {
-				sb.WriteString("Installed resolvers for: " + strings.Join(installed, ", ") + "\n")
-			}
-			if len(errors) > 0 {
-				sb.WriteString("Errors:\n")
-				for _, e := range errors {
-					sb.WriteString("  " + e + "\n")
-				}
-			}
-			if len(installed) == 0 && len(errors) == 0 {
-				sb.WriteString("No TLDs configured")
-			}
-			return textResult(sb.String())
+			return textResult(mustJSON(entries))
 		},
 	)
+}
+
+// --- add_dns_entry ---
+
+type addDNSEntryInput struct {
+	Domain string `json:"domain" jsonschema:"full domain name (e.g. app.example.com)"`
+	TLD    string `json:"tld" jsonschema:"parent TLD (e.g. example.com)"`
+	Target string `json:"target,omitempty" jsonschema:"IP address or hostname for CNAME (default 127.0.0.1)"`
+}
+
+func (s *MCPServer) addAddDNSEntry() {
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "add_dns_entry",
+		Description: "Register a subdomain within a managed TLD. Resolves to 127.0.0.1 by default, or a custom IP/hostname for CNAME.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input addDNSEntryInput) (*mcp.CallToolResult, any, error) {
+		target := input.Target
+		if target == "" {
+			target = "127.0.0.1"
+		}
+
+		entry, err := db.CreateDNSEntry(s.db, input.Domain, input.TLD, target)
+		if err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
+				IsError: true,
+			}, nil, nil
+		}
+
+		// Reload DNS entries
+		s.syncDNSEntries()
+
+		return nil, entry, nil
+	})
+}
+
+// --- remove_dns_entry ---
+
+type removeDNSEntryInput struct {
+	Domain string `json:"domain" jsonschema:"domain to remove (e.g. app.example.com)"`
+}
+
+func (s *MCPServer) addRemoveDNSEntry() {
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "remove_dns_entry",
+		Description: "Remove a registered DNS entry (subdomain)",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input removeDNSEntryInput) (*mcp.CallToolResult, any, error) {
+		if err := db.DeleteDNSEntry(s.db, input.Domain); err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
+				IsError: true,
+			}, nil, nil
+		}
+
+		s.syncDNSEntries()
+
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("DNS entry for %s removed", input.Domain)}},
+		}, nil, nil
+	})
+}
+
+// syncDNSEntries reloads all DNS entries into the DNS server.
+func (s *MCPServer) syncDNSEntries() {
+	if s.dnsServer == nil {
+		return
+	}
+	entries, err := db.ListDNSEntries(s.db)
+	if err != nil {
+		return
+	}
+	dnsEntries := make([]dns.DNSEntry, len(entries))
+	for i, e := range entries {
+		dnsEntries[i] = dns.DNSEntry{Domain: e.Domain, Target: e.Target}
+	}
+	s.dnsServer.SetEntries(dnsEntries)
 }

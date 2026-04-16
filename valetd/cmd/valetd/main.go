@@ -92,7 +92,7 @@ func mcpCmd() *cobra.Command {
 
 			dnsServer := dns.NewServer()
 			routeMgr := routes.NewManager(database.DB, certMgr, dnsServer, dataDir)
-			mcpSrv := mcpserver.New(database.DB, routeMgr, certMgr)
+			mcpSrv := mcpserver.New(database.DB, routeMgr, certMgr, dnsServer)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

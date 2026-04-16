@@ -165,7 +165,7 @@ func (d *Daemon) Start() error {
 	if mcpAddr == "" {
 		mcpAddr = ":7801"
 	}
-	mcpSrv := mcpserver.New(d.database.DB, d.routeMgr, d.certMgr)
+	mcpSrv := mcpserver.New(d.database.DB, d.routeMgr, d.certMgr, d.dnsServer)
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return mcpSrv.Server()
 	}, nil)
