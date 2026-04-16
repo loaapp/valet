@@ -15,11 +15,11 @@ import (
 	"github.com/loaapp/valet/valetd/internal/certs"
 	"github.com/loaapp/valet/valetd/internal/db"
 	"github.com/loaapp/valet/valetd/internal/dns"
+	"github.com/loaapp/valet/valetd/internal/domain"
 	"github.com/loaapp/valet/valetd/internal/logbuf"
 	"github.com/loaapp/valet/valetd/internal/logstore"
 	"github.com/loaapp/valet/valetd/internal/mcpserver"
 	"github.com/loaapp/valet/valetd/internal/metrics"
-	"github.com/loaapp/valet/valetd/internal/routes"
 	"github.com/loaapp/valet/valetd/internal/server"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -31,16 +31,18 @@ type Config struct {
 }
 
 type Daemon struct {
-	config    Config
-	database  *db.AppDB
-	dnsServer *dns.Server
-	apiServer *server.Server
-	routeMgr  *routes.Manager
-	certMgr   *certs.Manager
-	mcpHTTP   *http.Server
-	collector *metrics.Collector
-	logStore  *logstore.Store
-	tailer    *logbuf.Tailer
+	config      Config
+	database    *db.AppDB
+	dnsServer   *dns.Server
+	apiServer   *server.Server
+	routeSvc    *domain.RouteService
+	tldSvc      *domain.TLDService
+	dnsEntrySvc *domain.DNSEntryService
+	certMgr     *certs.Manager
+	collector   *metrics.Collector
+	logStore    *logstore.Store
+	tailer      *logbuf.Tailer
+	mcpHTTP     *http.Server
 }
 
 func New(cfg Config) *Daemon {
@@ -74,24 +76,16 @@ func (d *Daemon) Start() error {
 	// DNS server
 	d.dnsServer = dns.NewServer()
 
-	// Route manager
-	d.routeMgr = routes.NewManager(database.DB, certMgr, d.dnsServer, dataDir)
+	// Create domain services
+	d.routeSvc = domain.NewRouteService(database.DB, certMgr, d.dnsServer, dataDir)
+	d.tldSvc = domain.NewTLDService(database.DB, d.dnsServer)
+	d.dnsEntrySvc = domain.NewDNSEntryService(database.DB, d.dnsServer)
 
 	// Sync DNS TLDs from database
-	if err := d.routeMgr.SyncDNS(); err != nil {
-		log.Printf("Warning: failed to sync DNS TLDs: %v", err)
-	}
+	d.tldSvc.SyncDNS()
 
 	// Load dns_entries into DNS server
-	if dnsEntries, err := db.ListDNSEntries(database.DB); err == nil {
-		mapped := make([]dns.DNSEntry, len(dnsEntries))
-		for i, e := range dnsEntries {
-			mapped[i] = dns.DNSEntry{Domain: e.Domain, Target: e.Target}
-		}
-		d.dnsServer.SetEntries(mapped)
-	} else {
-		log.Printf("Warning: failed to load dns_entries: %v", err)
-	}
+	d.dnsEntrySvc.SyncEntries()
 
 	// Start DNS server
 	if d.config.DNSAddr != "" {
@@ -101,23 +95,6 @@ func (d *Daemon) Start() error {
 		}
 	}
 
-	// Load initial Caddy config from existing routes with combined cert
-	routeList, err := db.ListRoutes(database.DB)
-	if err != nil {
-		return fmt.Errorf("list routes: %w", err)
-	}
-	combinedCert, combinedKey := certMgr.CombinedCertPath()
-	if combinedCert == "" && len(routeList) > 0 && certs.MkcertAvailable() {
-		var tlsDomains []string
-		for _, r := range routeList {
-			if r.TLSEnabled {
-				tlsDomains = append(tlsDomains, r.Domain)
-			}
-		}
-		if len(tlsDomains) > 0 {
-			combinedCert, combinedKey, _ = certMgr.GenerateCombinedCert(tlsDomains)
-		}
-	}
 	// Redirect stderr to access.log so Caddy's structured logs are captured
 	accessLogPath := filepath.Join(dataDir, "access.log")
 	accessLogFile, err := os.OpenFile(accessLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -127,7 +104,8 @@ func (d *Daemon) Start() error {
 		os.Stderr = accessLogFile
 	}
 
-	if err := caddy.Reload(routeList, combinedCert, combinedKey, dataDir); err != nil {
+	// Load initial Caddy config via route service sync
+	if err := d.routeSvc.Sync(); err != nil {
 		return fmt.Errorf("initial caddy load: %w", err)
 	}
 
@@ -155,7 +133,7 @@ func (d *Daemon) Start() error {
 	}()
 
 	// Start API server
-	d.apiServer = server.New(d.config.APIAddr, database.DB, d.routeMgr, d.certMgr, d.collector, d.logStore, d.dnsServer)
+	d.apiServer = server.New(d.config.APIAddr, database.DB, d.routeSvc, d.tldSvc, d.dnsEntrySvc, d.certMgr, d.collector, d.logStore, d.dnsServer)
 	if err := d.apiServer.Start(); err != nil {
 		return fmt.Errorf("start API server: %w", err)
 	}
@@ -165,7 +143,7 @@ func (d *Daemon) Start() error {
 	if mcpAddr == "" {
 		mcpAddr = ":7801"
 	}
-	mcpSrv := mcpserver.New(d.database.DB, d.routeMgr, d.certMgr, d.dnsServer)
+	mcpSrv := mcpserver.New(d.routeSvc, d.tldSvc, d.dnsEntrySvc)
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return mcpSrv.Server()
 	}, nil)

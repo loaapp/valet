@@ -12,40 +12,41 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
-	"github.com/loaapp/valet/valetd/internal/caddy"
 	"github.com/loaapp/valet/valetd/internal/certs"
 	"github.com/loaapp/valet/valetd/internal/db"
 	"github.com/loaapp/valet/valetd/internal/dns"
+	"github.com/loaapp/valet/valetd/internal/domain"
 	"github.com/loaapp/valet/valetd/internal/logstore"
 	"github.com/loaapp/valet/valetd/internal/metrics"
 	"github.com/loaapp/valet/valetd/internal/resolver"
-	"github.com/loaapp/valet/valetd/internal/routes"
 	"github.com/loaapp/valet/valetd/internal/templates"
 )
 
 type Server struct {
-	httpServer *http.Server
-	database   *sql.DB
-	routeMgr   *routes.Manager
-	certMgr    *certs.Manager
-	collector  *metrics.Collector
-	logStore   *logstore.Store
-	dnsServer  *dns.Server
+	httpServer  *http.Server
+	database    *sql.DB
+	routeSvc    *domain.RouteService
+	tldSvc      *domain.TLDService
+	dnsEntrySvc *domain.DNSEntryService
+	certMgr     *certs.Manager
+	collector   *metrics.Collector
+	logStore    *logstore.Store
+	dnsServer   *dns.Server
 }
 
-func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs.Manager, collector *metrics.Collector, logStore *logstore.Store, dnsServer *dns.Server) *Server {
+func New(addr string, database *sql.DB, routeSvc *domain.RouteService, tldSvc *domain.TLDService, dnsEntrySvc *domain.DNSEntryService, certMgr *certs.Manager, collector *metrics.Collector, logStore *logstore.Store, dnsServer *dns.Server) *Server {
 	s := &Server{
-		database:  database,
-		routeMgr:  routeMgr,
-		certMgr:   certMgr,
-		collector: collector,
-		logStore:  logStore,
-		dnsServer: dnsServer,
+		database:    database,
+		routeSvc:    routeSvc,
+		tldSvc:      tldSvc,
+		dnsEntrySvc: dnsEntrySvc,
+		certMgr:     certMgr,
+		collector:   collector,
+		logStore:    logStore,
+		dnsServer:   dnsServer,
 	}
 
 	mux := http.NewServeMux()
@@ -105,19 +106,19 @@ func (s *Server) Stop() error {
 // --- Handlers ---
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	routeCount, _ := db.ListRoutes(s.database)
-	tldCount, _ := db.ListTLDs(s.database)
+	routeList, _ := s.routeSvc.List()
+	tldList, _ := s.tldSvc.List()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":   "running",
-		"routes":   len(routeCount),
-		"tlds":     len(tldCount),
+		"routes":   len(routeList),
+		"tlds":     len(tldList),
 		"mkcert":   certs.MkcertAvailable(),
 		"platform": "darwin",
 	})
 }
 
 func (s *Server) handleListRoutes(w http.ResponseWriter, r *http.Request) {
-	list, err := s.routeMgr.List()
+	list, err := s.routeSvc.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -139,134 +140,26 @@ type addRouteRequest struct {
 	HandlerConfig  string            `json:"handlerConfig"`
 }
 
-func (req *addRouteRequest) hasTemplate() bool {
-	return req.Template != ""
-}
-
-func (s *Server) resolveTemplate(req *addRouteRequest) error {
-	if req.Template == "" {
-		return nil
-	}
-	tmpl := templates.Get(req.Template)
-	if tmpl == nil {
-		return fmt.Errorf("unknown template: %s", req.Template)
-	}
-	params := make(map[string]string)
-	if req.Domain != "" {
-		params["domain"] = req.Domain
-	}
-	if req.Upstream != "" {
-		params["upstream"] = req.Upstream
-	}
-	for k, v := range req.TemplateParams {
-		params[k] = v
-	}
-	matchConfig, handlerConfig, err := tmpl.Apply(params)
-	if err != nil {
-		return fmt.Errorf("template %s: %w", req.Template, err)
-	}
-	if matchConfig != "" {
-		req.MatchConfig = matchConfig
-	}
-	if handlerConfig != "" {
-		req.HandlerConfig = handlerConfig
-	}
-	return nil
-}
-
-var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]+$`)
-var hostPortRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+:\d+$`)
-
-func normalizeUpstream(u string) string {
-	u = strings.TrimPrefix(u, "https://")
-	u = strings.TrimPrefix(u, "http://")
-	return u
-}
-
-func validateRouteRequest(req *addRouteRequest) error {
-	// Domain validation
-	req.Domain = strings.TrimSpace(req.Domain)
-	if req.Domain == "" {
-		return fmt.Errorf("invalid domain: domain is required")
-	}
-	if strings.Contains(req.Domain, " ") {
-		return fmt.Errorf("invalid domain: must not contain spaces")
-	}
-	if strings.Contains(req.Domain, "://") {
-		return fmt.Errorf("invalid domain: do not include http:// or https://")
-	}
-	if strings.Contains(req.Domain, "/") {
-		return fmt.Errorf("invalid domain: do not include paths")
-	}
-	if strings.Contains(req.Domain, ":") {
-		return fmt.Errorf("invalid domain: do not include a port")
-	}
-	if req.Domain != strings.ToLower(req.Domain) {
-		return fmt.Errorf("invalid domain: must be lowercase")
-	}
-	if !domainRe.MatchString(req.Domain) {
-		return fmt.Errorf("invalid domain: must be a valid domain (e.g., myapp.test)")
-	}
-
-	// Upstream validation — normalize first
-	req.Upstream = strings.TrimSpace(req.Upstream)
-	req.Upstream = normalizeUpstream(req.Upstream)
-	if req.Upstream != "" {
-		if strings.Contains(req.Upstream, " ") {
-			return fmt.Errorf("invalid upstream: must not contain spaces")
-		}
-		if !hostPortRe.MatchString(req.Upstream) {
-			return fmt.Errorf("invalid upstream: must be host:port format (e.g., localhost:3000)")
-		}
-	}
-
-	// Template param validation
-	if req.Template != "" {
-		tmpl := templates.Get(req.Template)
-		if tmpl != nil {
-			for _, p := range tmpl.Params {
-				if p.Required {
-					v := req.TemplateParams[p.Key]
-					if v == "" {
-						return fmt.Errorf("invalid templateParams: required parameter %q is missing", p.Key)
-					}
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
 func (s *Server) handleAddRoute(w http.ResponseWriter, r *http.Request) {
 	var req addRouteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
 		return
 	}
-	if err := validateRouteRequest(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
+
+	domainReq := domain.AddRouteRequest{
+		Domain:         req.Domain,
+		Upstream:       req.Upstream,
+		Description:    req.Description,
+		Template:       req.Template,
+		TemplateParams: req.TemplateParams,
+		MatchConfig:    req.MatchConfig,
+		HandlerConfig:  req.HandlerConfig,
 	}
 
-	if !req.hasTemplate() && req.Upstream == "" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid upstream: upstream is required when not using a template"))
-		return
-	}
-
-	if err := s.resolveTemplate(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-
-	tlsEnabled := true
-	if req.TLS != nil {
-		tlsEnabled = *req.TLS
-	}
-
-	route, err := s.routeMgr.Add(req.Domain, req.Upstream, tlsEnabled, req.MatchConfig, req.HandlerConfig, req.Template, req.Description)
+	route, err := s.routeSvc.Add(domainReq)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, route)
@@ -274,7 +167,7 @@ func (s *Server) handleAddRoute(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetRoute(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	route, err := db.GetRoute(s.database, id)
+	route, err := s.routeSvc.Get(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -289,100 +182,41 @@ func (s *Server) handleGetRoute(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateRoute(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	existing, err := db.GetRoute(s.database, id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if existing == nil {
-		writeError(w, http.StatusNotFound, fmt.Errorf("route not found"))
-		return
-	}
-
 	var req addRouteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON: %w", err))
 		return
 	}
 
-	// Normalize upstream at API level
-	req.Upstream = strings.TrimSpace(req.Upstream)
-	req.Upstream = normalizeUpstream(req.Upstream)
-
-	// Validate any fields that were provided
+	// Build UpdateRouteRequest with pointer fields for non-empty values
+	updateReq := domain.UpdateRouteRequest{}
 	if req.Domain != "" {
-		check := addRouteRequest{Domain: req.Domain, Upstream: "localhost:1"}
-		if err := validateRouteRequest(&check); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
+		updateReq.Domain = &req.Domain
 	}
 	if req.Upstream != "" {
-		if strings.Contains(req.Upstream, " ") {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid upstream: must not contain spaces"))
-			return
-		}
-		if !hostPortRe.MatchString(req.Upstream) {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid upstream: must be host:port format (e.g., localhost:3000)"))
-			return
-		}
+		updateReq.Upstream = &req.Upstream
 	}
-
-	domain := existing.Domain
-	if req.Domain != "" {
-		domain = req.Domain
-	}
-	upstream := existing.Upstream
-	upstreamChanged := false
-	if req.Upstream != "" {
-		upstream = req.Upstream
-		upstreamChanged = true
-	}
-	tlsEnabled := existing.TLSEnabled
-	if req.TLS != nil {
-		tlsEnabled = *req.TLS
-	}
-
-	// Resolve template if provided
-	if req.Template != "" {
-		req.Domain = domain
-		req.Upstream = upstream
-		if err := s.resolveTemplate(&req); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-	}
-
-	matchConfig := existing.MatchConfig
-	if req.MatchConfig != "" {
-		matchConfig = req.MatchConfig
-	}
-	handlerConfig := existing.HandlerConfig
-	if req.HandlerConfig != "" {
-		handlerConfig = req.HandlerConfig
-	} else if upstreamChanged && req.Template == "" {
-		// If upstream changed on a simple (non-template) route, clear stale
-		// handlerConfig so Caddy uses the updated upstream column directly.
-		handlerConfig = ""
-	}
-	tmpl := existing.Template
-	if req.Template != "" {
-		tmpl = req.Template
-	}
-	description := existing.Description
 	if req.Description != "" {
-		description = req.Description
+		updateReq.Description = &req.Description
+	}
+	if req.MatchConfig != "" {
+		updateReq.MatchConfig = &req.MatchConfig
+	}
+	if req.HandlerConfig != "" {
+		updateReq.HandlerConfig = &req.HandlerConfig
+	}
+	if req.Template != "" {
+		updateReq.Template = &req.Template
 	}
 
-	route, err := db.UpdateRoute(s.database, id, domain, upstream, tlsEnabled, existing.CertPath, existing.KeyPath, matchConfig, handlerConfig, tmpl, description)
+	route, err := s.routeSvc.Update(id, updateReq)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		if err.Error() == "route not found" {
+			writeError(w, http.StatusNotFound, err)
+		} else {
+			writeError(w, http.StatusBadRequest, err)
+		}
 		return
-	}
-
-	// Reload Caddy with updated config
-	if err := s.routeMgr.Sync(); err != nil {
-		log.Printf("Warning: failed to sync after route update: %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, route)
@@ -391,7 +225,7 @@ func (s *Server) handleUpdateRoute(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	route, err := db.GetRoute(s.database, id)
+	route, err := s.routeSvc.Get(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -401,7 +235,7 @@ func (s *Server) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.routeMgr.Remove(route.Domain); err != nil {
+	if err := s.routeSvc.Remove(route.Domain); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -409,13 +243,13 @@ func (s *Server) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListTLDs(w http.ResponseWriter, r *http.Request) {
-	tlds, err := db.ListTLDs(s.database)
+	tlds, err := s.tldSvc.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if tlds == nil {
-		tlds = []db.ManagedTLD{}
+		tlds = []domain.TLDStatus{}
 	}
 	writeJSON(w, http.StatusOK, tlds)
 }
@@ -431,26 +265,15 @@ func (s *Server) handleAddTLD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tld := strings.TrimPrefix(req.TLD, ".")
-	if tld == "" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("tld is required"))
-		return
-	}
-
-	existing, _ := db.GetTLD(s.database, tld)
-	if existing != nil {
-		writeError(w, http.StatusConflict, fmt.Errorf("TLD .%s already managed", tld))
-		return
-	}
-
-	result, err := db.CreateTLD(s.database, tld)
+	result, err := s.tldSvc.Register(req.TLD)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		if fmt.Sprintf("%v", err) == fmt.Sprintf("TLD .%s already managed", req.TLD) {
+			writeError(w, http.StatusConflict, err)
+		} else {
+			writeError(w, http.StatusBadRequest, err)
+		}
 		return
 	}
-
-	// Update DNS server
-	s.routeMgr.SyncDNS()
 
 	writeJSON(w, http.StatusCreated, result)
 }
@@ -458,13 +281,10 @@ func (s *Server) handleAddTLD(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteTLD(w http.ResponseWriter, r *http.Request) {
 	tld := r.PathValue("tld")
 
-	if err := db.DeleteTLD(s.database, tld); err != nil {
+	if err := s.tldSvc.Unregister(tld); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-
-	resolver.Remove(tld)
-	s.routeMgr.SyncDNS()
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -473,13 +293,7 @@ func (s *Server) handleDeleteTLD(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListDNSEntries(w http.ResponseWriter, r *http.Request) {
 	tld := r.URL.Query().Get("tld")
-	var entries []db.DNSEntry
-	var err error
-	if tld != "" {
-		entries, err = db.ListDNSEntriesByTLD(s.database, tld)
-	} else {
-		entries, err = db.ListDNSEntries(s.database)
-	}
+	entries, err := s.dnsEntrySvc.List(tld)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -503,66 +317,28 @@ func (s *Server) handleCreateDNSEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Domain = strings.TrimSpace(strings.ToLower(req.Domain))
-	req.TLD = strings.TrimSpace(strings.TrimPrefix(req.TLD, "."))
-	req.Target = strings.TrimSpace(req.Target)
-
-	if req.Domain == "" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("domain is required"))
-		return
-	}
-	if req.TLD == "" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("tld is required"))
-		return
-	}
-	if !domainRe.MatchString(req.Domain) {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid domain format"))
-		return
-	}
-	if req.Target == "" {
-		req.Target = "127.0.0.1"
-	}
-
-	entry, err := db.CreateDNSEntry(s.database, req.Domain, req.TLD, req.Target)
+	entry, err := s.dnsEntrySvc.Add(req.Domain, req.TLD, req.Target)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-
-	// Reload dns_entries into DNS server
-	s.syncDNSEntries()
 
 	writeJSON(w, http.StatusCreated, entry)
 }
 
 func (s *Server) handleDeleteDNSEntry(w http.ResponseWriter, r *http.Request) {
-	domain := r.PathValue("domain")
-	if domain == "" {
+	domainName := r.PathValue("domain")
+	if domainName == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("domain is required"))
 		return
 	}
 
-	if err := db.DeleteDNSEntry(s.database, domain); err != nil {
+	if err := s.dnsEntrySvc.Remove(domainName); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	s.syncDNSEntries()
-
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-}
-
-func (s *Server) syncDNSEntries() {
-	entries, err := db.ListDNSEntries(s.database)
-	if err != nil {
-		log.Printf("Warning: failed to load dns_entries: %v", err)
-		return
-	}
-	dnsEntries := make([]dns.DNSEntry, len(entries))
-	for i, e := range entries {
-		dnsEntries[i] = dns.DNSEntry{Domain: e.Domain, Target: e.Target}
-	}
-	s.dnsServer.SetEntries(dnsEntries)
 }
 
 // --- Settings ---
@@ -648,28 +424,17 @@ func (s *Server) handlePreviewRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.resolveTemplate(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
+	domainReq := domain.AddRouteRequest{
+		Domain:         req.Domain,
+		Upstream:       req.Upstream,
+		Template:       req.Template,
+		TemplateParams: req.TemplateParams,
+		MatchConfig:    req.MatchConfig,
+		HandlerConfig:  req.HandlerConfig,
+		Description:    req.Description,
 	}
 
-	tlsEnabled := true
-	if req.TLS != nil {
-		tlsEnabled = *req.TLS
-	}
-
-	fakeRoute := db.Route{
-		ID:            "preview",
-		Domain:        req.Domain,
-		Upstream:      req.Upstream,
-		TLSEnabled:    tlsEnabled,
-		MatchConfig:   req.MatchConfig,
-		HandlerConfig: req.HandlerConfig,
-		Template:      req.Template,
-		Description:   req.Description,
-	}
-
-	preview, err := caddy.BuildRoutePreview(fakeRoute)
+	preview, err := s.routeSvc.Preview(domainReq)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -785,7 +550,7 @@ func (s *Server) handleCertInfo(w http.ResponseWriter, r *http.Request) {
 	certPath, _ := s.certMgr.CombinedCertPath()
 	if certPath == "" {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"exists": false,
+			"exists":  false,
 			"domains": []string{},
 		})
 		return

@@ -5,38 +5,29 @@ package mcpserver
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net"
-	"net/http"
-	"strings"
-	"time"
 
 	"github.com/loaapp/valet/valetd/internal/certs"
-	"github.com/loaapp/valet/valetd/internal/db"
-	"github.com/loaapp/valet/valetd/internal/dns"
-	"github.com/loaapp/valet/valetd/internal/routes"
+	"github.com/loaapp/valet/valetd/internal/domain"
 	"github.com/loaapp/valet/valetd/internal/templates"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // MCPServer wraps an MCP server with valetd tools.
 type MCPServer struct {
-	db        *sql.DB
-	routeMgr  *routes.Manager
-	certMgr   *certs.Manager
-	dnsServer *dns.Server
-	server    *mcp.Server
+	routeSvc    *domain.RouteService
+	tldSvc      *domain.TLDService
+	dnsEntrySvc *domain.DNSEntryService
+	server      *mcp.Server
 }
 
 // New creates a new MCPServer with all tools registered.
-func New(database *sql.DB, routeMgr *routes.Manager, certMgr *certs.Manager, dnsServer *dns.Server) *MCPServer {
+func New(routeSvc *domain.RouteService, tldSvc *domain.TLDService, dnsEntrySvc *domain.DNSEntryService) *MCPServer {
 	s := &MCPServer{
-		db:        database,
-		routeMgr:  routeMgr,
-		certMgr:   certMgr,
-		dnsServer: dnsServer,
+		routeSvc:    routeSvc,
+		tldSvc:      tldSvc,
+		dnsEntrySvc: dnsEntrySvc,
 	}
 	s.server = mcp.NewServer(&mcp.Implementation{
 		Name:    "valetd",
@@ -98,7 +89,7 @@ func (s *MCPServer) addListRoutes() {
 			InputSchema: json.RawMessage(`{"type":"object"}`),
 		},
 		func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			routeList, err := db.ListRoutes(s.db)
+			routeList, err := s.routeSvc.List()
 			if err != nil {
 				return errResult(err)
 			}
@@ -112,7 +103,6 @@ func (s *MCPServer) addListRoutes() {
 type addRouteInput struct {
 	Domain         string            `json:"domain" jsonschema:"the domain name (e.g. myapp.test)"`
 	Upstream       string            `json:"upstream" jsonschema:"upstream address (e.g. localhost:3000)"`
-	TLS            *bool             `json:"tls,omitempty" jsonschema:"enable TLS with mkcert"`
 	Description    string            `json:"description,omitempty" jsonschema:"human-readable description"`
 	Template       string            `json:"template,omitempty" jsonschema:"route template slug"`
 	TemplateParams map[string]string `json:"templateParams,omitempty" jsonschema:"parameters for the template"`
@@ -123,35 +113,15 @@ func (s *MCPServer) addAddRoute() {
 		Name:        "add_route",
 		Description: "Add a new route mapping a domain to an upstream",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input addRouteInput) (*mcp.CallToolResult, any, error) {
-		tlsEnabled := true // TLS is always on
-		if input.TLS != nil {
-			tlsEnabled = *input.TLS
+		domainReq := domain.AddRouteRequest{
+			Domain:         input.Domain,
+			Upstream:       input.Upstream,
+			Description:    input.Description,
+			Template:       input.Template,
+			TemplateParams: input.TemplateParams,
 		}
 
-		var matchConfig, handlerConfig string
-		if input.Template != "" {
-			tmpl := templates.Get(input.Template)
-			if tmpl == nil {
-				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: unknown template %q", input.Template)}},
-					IsError: true,
-				}, nil, nil
-			}
-			params := input.TemplateParams
-			if params == nil {
-				params = map[string]string{}
-			}
-			var err error
-			matchConfig, handlerConfig, err = tmpl.Apply(params)
-			if err != nil {
-				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: template apply: %v", err)}},
-					IsError: true,
-				}, nil, nil
-			}
-		}
-
-		route, err := s.routeMgr.Add(input.Domain, input.Upstream, tlsEnabled, matchConfig, handlerConfig, input.Template, input.Description)
+		route, err := s.routeSvc.Add(domainReq)
 		if err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
@@ -173,7 +143,7 @@ func (s *MCPServer) addRemoveRoute() {
 		Name:        "remove_route",
 		Description: "Remove a route by domain",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input removeRouteInput) (*mcp.CallToolResult, any, error) {
-		if err := s.routeMgr.Remove(input.Domain); err != nil {
+		if err := s.routeSvc.Remove(input.Domain); err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 				IsError: true,
@@ -191,7 +161,6 @@ type updateRouteInput struct {
 	ID          string `json:"id" jsonschema:"route ID"`
 	Domain      string `json:"domain,omitempty" jsonschema:"new domain"`
 	Upstream    string `json:"upstream,omitempty" jsonschema:"new upstream"`
-	TLS         *bool  `json:"tls,omitempty" jsonschema:"enable or disable TLS"`
 	Description string `json:"description,omitempty" jsonschema:"new description"`
 }
 
@@ -200,51 +169,21 @@ func (s *MCPServer) addUpdateRoute() {
 		Name:        "update_route",
 		Description: "Update an existing route by ID",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input updateRouteInput) (*mcp.CallToolResult, any, error) {
-		existing, err := db.GetRoute(s.db, input.ID)
-		if err != nil {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
-				IsError: true,
-			}, nil, nil
-		}
-		if existing == nil {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: route %s not found", input.ID)}},
-				IsError: true,
-			}, nil, nil
-		}
-
-		// Merge: use new values if provided, otherwise keep existing
-		domain := existing.Domain
+		updateReq := domain.UpdateRouteRequest{}
 		if input.Domain != "" {
-			domain = input.Domain
+			updateReq.Domain = &input.Domain
 		}
-		upstream := existing.Upstream
 		if input.Upstream != "" {
-			upstream = input.Upstream
+			updateReq.Upstream = &input.Upstream
 		}
-		tlsEnabled := existing.TLSEnabled
-		if input.TLS != nil {
-			tlsEnabled = *input.TLS
-		}
-		description := existing.Description
 		if input.Description != "" {
-			description = input.Description
+			updateReq.Description = &input.Description
 		}
 
-		updated, err := db.UpdateRoute(s.db, input.ID, domain, upstream, tlsEnabled,
-			existing.CertPath, existing.KeyPath, existing.MatchConfig, existing.HandlerConfig,
-			existing.Template, description)
+		updated, err := s.routeSvc.Update(input.ID, updateReq)
 		if err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
-				IsError: true,
-			}, nil, nil
-		}
-
-		if err := s.routeMgr.Sync(); err != nil {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error syncing: %v", err)}},
 				IsError: true,
 			}, nil, nil
 		}
@@ -256,8 +195,8 @@ func (s *MCPServer) addUpdateRoute() {
 // --- get_status ---
 
 type statusOutput struct {
-	RouteCount     int  `json:"routeCount"`
-	TLDCount       int  `json:"tldCount"`
+	RouteCount      int  `json:"routeCount"`
+	TLDCount        int  `json:"tldCount"`
 	MkcertAvailable bool `json:"mkcertAvailable"`
 }
 
@@ -269,11 +208,11 @@ func (s *MCPServer) addGetStatus() {
 			InputSchema: json.RawMessage(`{"type":"object"}`),
 		},
 		func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			routeList, err := db.ListRoutes(s.db)
+			routeList, err := s.routeSvc.List()
 			if err != nil {
 				return errResult(err)
 			}
-			tldList, err := db.ListTLDs(s.db)
+			tldList, err := s.tldSvc.List()
 			if err != nil {
 				return errResult(err)
 			}
@@ -297,7 +236,7 @@ func (s *MCPServer) addListTLDs() {
 			InputSchema: json.RawMessage(`{"type":"object"}`),
 		},
 		func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			tldList, err := db.ListTLDs(s.db)
+			tldList, err := s.tldSvc.List()
 			if err != nil {
 				return errResult(err)
 			}
@@ -311,10 +250,10 @@ func (s *MCPServer) addListTLDs() {
 // --- list_templates ---
 
 type templateInfo struct {
-	Slug        string           `json:"slug"`
-	Name        string           `json:"name"`
-	Description string           `json:"description"`
-	Params      []templateParam  `json:"params,omitempty"`
+	Slug        string          `json:"slug"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Params      []templateParam `json:"params,omitempty"`
 }
 
 type templateParam struct {
@@ -363,49 +302,29 @@ type previewRouteInput struct {
 	TemplateParams map[string]string `json:"templateParams,omitempty" jsonschema:"template parameters"`
 }
 
-type previewOutput struct {
-	Domain        string `json:"domain"`
-	Upstream      string `json:"upstream"`
-	MatchConfig   string `json:"matchConfig,omitempty"`
-	HandlerConfig string `json:"handlerConfig,omitempty"`
-	Template      string `json:"template,omitempty"`
-}
-
 func (s *MCPServer) addPreviewRoute() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "preview_route",
 		Description: "Preview a route configuration without creating it",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input previewRouteInput) (*mcp.CallToolResult, any, error) {
-		preview := previewOutput{
-			Domain:   input.Domain,
-			Upstream: input.Upstream,
-			Template: input.Template,
+		domainReq := domain.AddRouteRequest{
+			Domain:         input.Domain,
+			Upstream:       input.Upstream,
+			Template:       input.Template,
+			TemplateParams: input.TemplateParams,
 		}
 
-		if input.Template != "" {
-			tmpl := templates.Get(input.Template)
-			if tmpl == nil {
-				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: unknown template %q", input.Template)}},
-					IsError: true,
-				}, nil, nil
-			}
-			params := input.TemplateParams
-			if params == nil {
-				params = map[string]string{}
-			}
-			matchConfig, handlerConfig, err := tmpl.Apply(params)
-			if err != nil {
-				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
-					IsError: true,
-				}, nil, nil
-			}
-			preview.MatchConfig = matchConfig
-			preview.HandlerConfig = handlerConfig
+		preview, err := s.routeSvc.Preview(domainReq)
+		if err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
+				IsError: true,
+			}, nil, nil
 		}
 
-		return nil, preview, nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(preview)}},
+		}, nil, nil
 	})
 }
 
@@ -415,100 +334,19 @@ type diagnoseRouteInput struct {
 	Domain string `json:"domain" jsonschema:"domain to diagnose"`
 }
 
-type diagnoseCheck struct {
-	Check   string `json:"check"`
-	Status  string `json:"status"` // "pass" or "fail"
-	Details string `json:"details,omitempty"`
-}
-
-type diagnoseOutput struct {
-	Domain string          `json:"domain"`
-	Checks []diagnoseCheck `json:"checks"`
-}
-
 func (s *MCPServer) addDiagnoseRoute() {
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "diagnose_route",
 		Description: "Diagnose connectivity for a route: DNS, TCP, and HTTP checks",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input diagnoseRouteInput) (*mcp.CallToolResult, any, error) {
-		out := diagnoseOutput{Domain: input.Domain}
-
-		// 1. DNS lookup
-		addrs, err := net.LookupHost(input.Domain)
+		result, err := s.routeSvc.Diagnose(input.Domain)
 		if err != nil {
-			out.Checks = append(out.Checks, diagnoseCheck{
-				Check:   "DNS lookup",
-				Status:  "fail",
-				Details: err.Error(),
-			})
-		} else {
-			out.Checks = append(out.Checks, diagnoseCheck{
-				Check:   "DNS lookup",
-				Status:  "pass",
-				Details: strings.Join(addrs, ", "),
-			})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
+				IsError: true,
+			}, nil, nil
 		}
-
-		// 2. Find route in DB
-		route, err := db.GetRouteByDomain(s.db, input.Domain)
-		if err != nil {
-			out.Checks = append(out.Checks, diagnoseCheck{
-				Check:   "Route lookup",
-				Status:  "fail",
-				Details: err.Error(),
-			})
-			return nil, out, nil
-		}
-		if route == nil {
-			out.Checks = append(out.Checks, diagnoseCheck{
-				Check:   "Route lookup",
-				Status:  "fail",
-				Details: "no route configured for this domain",
-			})
-			return nil, out, nil
-		}
-		out.Checks = append(out.Checks, diagnoseCheck{
-			Check:   "Route lookup",
-			Status:  "pass",
-			Details: fmt.Sprintf("upstream=%s tls=%v", route.Upstream, route.TLSEnabled),
-		})
-
-		// 3. TCP connect to upstream
-		conn, err := net.DialTimeout("tcp", route.Upstream, 3*time.Second)
-		if err != nil {
-			out.Checks = append(out.Checks, diagnoseCheck{
-				Check:   "TCP connect to upstream",
-				Status:  "fail",
-				Details: err.Error(),
-			})
-		} else {
-			conn.Close()
-			out.Checks = append(out.Checks, diagnoseCheck{
-				Check:   "TCP connect to upstream",
-				Status:  "pass",
-				Details: route.Upstream,
-			})
-		}
-
-		// 4. HTTP GET to upstream
-		httpClient := &http.Client{Timeout: 3 * time.Second}
-		resp, err := httpClient.Get("http://" + route.Upstream)
-		if err != nil {
-			out.Checks = append(out.Checks, diagnoseCheck{
-				Check:   "HTTP GET upstream",
-				Status:  "fail",
-				Details: err.Error(),
-			})
-		} else {
-			resp.Body.Close()
-			out.Checks = append(out.Checks, diagnoseCheck{
-				Check:   "HTTP GET upstream",
-				Status:  "pass",
-				Details: fmt.Sprintf("status %d", resp.StatusCode),
-			})
-		}
-
-		return nil, out, nil
+		return nil, result, nil
 	})
 }
 
@@ -524,7 +362,7 @@ func (s *MCPServer) addListDNSEntries() {
 			InputSchema: json.RawMessage(`{"type":"object"}`),
 		},
 		func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			entries, err := db.ListDNSEntries(s.db)
+			entries, err := s.dnsEntrySvc.List("")
 			if err != nil {
 				return errResult(err)
 			}
@@ -546,22 +384,13 @@ func (s *MCPServer) addAddDNSEntry() {
 		Name:        "add_dns_entry",
 		Description: "Register a subdomain within a managed TLD. Resolves to 127.0.0.1 by default, or a custom IP/hostname for CNAME.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input addDNSEntryInput) (*mcp.CallToolResult, any, error) {
-		target := input.Target
-		if target == "" {
-			target = "127.0.0.1"
-		}
-
-		entry, err := db.CreateDNSEntry(s.db, input.Domain, input.TLD, target)
+		entry, err := s.dnsEntrySvc.Add(input.Domain, input.TLD, input.Target)
 		if err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 				IsError: true,
 			}, nil, nil
 		}
-
-		// Reload DNS entries
-		s.syncDNSEntries()
-
 		return nil, entry, nil
 	})
 }
@@ -577,33 +406,15 @@ func (s *MCPServer) addRemoveDNSEntry() {
 		Name:        "remove_dns_entry",
 		Description: "Remove a registered DNS entry (subdomain)",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input removeDNSEntryInput) (*mcp.CallToolResult, any, error) {
-		if err := db.DeleteDNSEntry(s.db, input.Domain); err != nil {
+		if err := s.dnsEntrySvc.Remove(input.Domain); err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 				IsError: true,
 			}, nil, nil
 		}
 
-		s.syncDNSEntries()
-
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("DNS entry for %s removed", input.Domain)}},
 		}, nil, nil
 	})
-}
-
-// syncDNSEntries reloads all DNS entries into the DNS server.
-func (s *MCPServer) syncDNSEntries() {
-	if s.dnsServer == nil {
-		return
-	}
-	entries, err := db.ListDNSEntries(s.db)
-	if err != nil {
-		return
-	}
-	dnsEntries := make([]dns.DNSEntry, len(entries))
-	for i, e := range entries {
-		dnsEntries[i] = dns.DNSEntry{Domain: e.Domain, Target: e.Target}
-	}
-	s.dnsServer.SetEntries(dnsEntries)
 }

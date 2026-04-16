@@ -14,9 +14,9 @@ import (
 	"github.com/loaapp/valet/valetd/internal/daemon"
 	"github.com/loaapp/valet/valetd/internal/db"
 	"github.com/loaapp/valet/valetd/internal/dns"
+	"github.com/loaapp/valet/valetd/internal/domain"
 	"github.com/loaapp/valet/valetd/internal/mcpserver"
 	"github.com/loaapp/valet/valetd/internal/resolver"
-	"github.com/loaapp/valet/valetd/internal/routes"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 )
@@ -91,8 +91,10 @@ func mcpCmd() *cobra.Command {
 			}
 
 			dnsServer := dns.NewServer()
-			routeMgr := routes.NewManager(database.DB, certMgr, dnsServer, dataDir)
-			mcpSrv := mcpserver.New(database.DB, routeMgr, certMgr, dnsServer)
+			routeSvc := domain.NewRouteService(database.DB, certMgr, dnsServer, dataDir)
+			tldSvc := domain.NewTLDService(database.DB, dnsServer)
+			dnsEntrySvc := domain.NewDNSEntryService(database.DB, dnsServer)
+			mcpSrv := mcpserver.New(routeSvc, tldSvc, dnsEntrySvc)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
