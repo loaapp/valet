@@ -123,7 +123,10 @@ func (s *MCPServer) addAddRoute() {
 		Name:        "add_route",
 		Description: "Add a new route mapping a domain to an upstream",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input addRouteInput) (*mcp.CallToolResult, any, error) {
-		tlsEnabled := input.TLS != nil && *input.TLS
+		tlsEnabled := true // TLS is always on
+		if input.TLS != nil {
+			tlsEnabled = *input.TLS
+		}
 
 		var matchConfig, handlerConfig string
 		if input.Template != "" {

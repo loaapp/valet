@@ -29,3 +29,7 @@ func (s *StatusService) IsDaemonRunning() bool {
 func (s *StatusService) GetDNSStatus() ([]map[string]any, error) {
 	return s.client.GetDNSStatus()
 }
+
+func (s *StatusService) GetCertInfo() (map[string]any, error) {
+	return s.client.GetCertInfo()
+}

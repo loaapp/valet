@@ -2,13 +2,16 @@ package server
 
 import (
 	"context"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"net/http"
-	"math"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -56,6 +59,7 @@ func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs
 	mux.HandleFunc("POST /api/v1/tlds", s.handleAddTLD)
 	mux.HandleFunc("DELETE /api/v1/tlds/{tld}", s.handleDeleteTLD)
 	mux.HandleFunc("GET /api/v1/dns/status", s.handleDNSStatus)
+	mux.HandleFunc("GET /api/v1/certs/info", s.handleCertInfo)
 	mux.HandleFunc("GET /api/v1/templates", s.handleListTemplates)
 	mux.HandleFunc("POST /api/v1/routes/preview", s.handlePreviewRoute)
 	mux.HandleFunc("GET /api/v1/metrics/current", s.handleMetricsCurrent)
@@ -773,6 +777,53 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		entries = []logstore.HTTPLogEntry{}
 	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+// --- Certs ---
+
+func (s *Server) handleCertInfo(w http.ResponseWriter, r *http.Request) {
+	certPath, _ := s.certMgr.CombinedCertPath()
+	if certPath == "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"exists": false,
+			"domains": []string{},
+		})
+		return
+	}
+
+	certData, err := os.ReadFile(certPath)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"exists": false, "domains": []string{}})
+		return
+	}
+
+	block, _ := pem.Decode(certData)
+	if block == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"exists": false, "domains": []string{}, "error": "failed to parse PEM"})
+		return
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"exists": false, "domains": []string{}, "error": err.Error()})
+		return
+	}
+
+	var domains []string
+	for _, name := range cert.DNSNames {
+		domains = append(domains, name)
+	}
+	for _, ip := range cert.IPAddresses {
+		domains = append(domains, ip.String())
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"exists":    true,
+		"domains":   domains,
+		"notBefore": cert.NotBefore.Format("2006-01-02"),
+		"notAfter":  cert.NotAfter.Format("2006-01-02"),
+		"issuer":    cert.Issuer.CommonName,
+	})
 }
 
 // --- DNS ---

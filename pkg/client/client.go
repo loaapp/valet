@@ -240,6 +240,14 @@ func (c *Client) GetLogs(limit int, since float64, route string) ([]map[string]a
 	return result, nil
 }
 
+func (c *Client) GetCertInfo() (map[string]any, error) {
+	var result map[string]any
+	if err := c.get("/api/v1/certs/info", &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (c *Client) ClearHTTPLogs() error {
 	return c.del("/api/v1/logs")
 }
