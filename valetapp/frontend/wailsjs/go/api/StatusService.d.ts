@@ -3,6 +3,8 @@
 import {models} from '../models';
 import {context} from '../models';
 
+export function GetCertInfo():Promise<Record<string, any>>;
+
 export function GetDNSStatus():Promise<Array<Record<string, any>>>;
 
 export function GetStatus():Promise<models.DaemonStatus>;

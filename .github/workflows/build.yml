@@ -10,19 +10,23 @@ on:
 jobs:
   build-daemon:
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: 1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: 'stable'
+          cache-dependency-path: 'valetd/go.sum'
       - name: Build daemon and CLI
+        working-directory: valetd
         run: |
-          go build -o bin/valetd github.com/loaapp/valet/valetd/cmd/valetd
-          go build -o bin/valet github.com/loaapp/valet/valetd/cmd/valet
+          go build -o ../bin/valetd ./cmd/valetd
+          go build -o ../bin/valet ./cmd/valet
       - name: Run vet
         run: |
-          go vet github.com/loaapp/valet/valetd/...
-          go vet github.com/loaapp/valet/pkg/...
+          (cd valetd && go vet ./...)
+          (cd pkg && go vet ./...)
       - uses: actions/upload-artifact@v4
         with:
           name: daemon-linux-amd64
@@ -35,6 +39,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: 'stable'
+          cache-dependency-path: |
+            valetd/go.sum
+            valetapp/go.sum
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -45,11 +52,10 @@ jobs:
       - name: Build Wails app
         run: cd valetapp && wails build
       - name: Bundle daemon inside app
+        working-directory: valetd
         run: |
-          go build -o valetapp/build/bin/Valet.app/Contents/MacOS/valetd \
-            github.com/loaapp/valet/valetd/cmd/valetd
-          go build -o valetapp/build/bin/Valet.app/Contents/MacOS/valet \
-            github.com/loaapp/valet/valetd/cmd/valet
+          go build -o ../valetapp/build/bin/Valet.app/Contents/MacOS/valetd ./cmd/valetd
+          go build -o ../valetapp/build/bin/Valet.app/Contents/MacOS/valet ./cmd/valet
       - name: Create DMG
         run: |
           create-dmg --volname "Valet" --window-size 600 400 \

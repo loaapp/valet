@@ -42,7 +42,7 @@
     const entries = tab === 'http' ? getLogs() : getDnsLogs();
     if (autoScroll && tableBody && entries.length > 0) {
       requestAnimationFrame(() => {
-        tableBody.scrollTop = tableBody.scrollHeight;
+        tableBody.scrollTop = 0;
       });
     }
   });

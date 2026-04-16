@@ -98,10 +98,6 @@ func (s *Store) GetHTTPLogs(limit int, since float64, route string) ([]HTTPLogEn
 		entries = append(entries, e)
 	}
 
-	// Reverse to chronological order (oldest first)
-	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
-		entries[i], entries[j] = entries[j], entries[i]
-	}
 	return entries, nil
 }
 
@@ -136,10 +132,6 @@ func (s *Store) GetDNSLogs(limit int) ([]DNSLogEntry, error) {
 		entries = append(entries, e)
 	}
 
-	// Reverse to chronological order (oldest first)
-	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
-		entries[i], entries[j] = entries[j], entries[i]
-	}
 	return entries, nil
 }
 
