@@ -1,0 +1,15 @@
+#!/bin/bash
+# preinstall — runs as root before pkg installs files.
+# Stops the running daemon so files can be replaced cleanly.
+
+PLIST_NAME="run.loa.valetd"
+CONSOLE_USER=$( /usr/bin/stat -f "%Su" /dev/console )
+CONSOLE_UID=$( /usr/bin/id -u "${CONSOLE_USER}" )
+
+# Stop the running agent if loaded. Ignore errors on fresh install.
+/bin/launchctl bootout "gui/${CONSOLE_UID}/${PLIST_NAME}" 2>/dev/null || true
+
+# Kill any stray valetd processes.
+/usr/bin/killall valetd 2>/dev/null || true
+
+exit 0

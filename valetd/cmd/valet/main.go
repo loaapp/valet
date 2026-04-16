@@ -274,7 +274,7 @@ func logsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logPath := filepath.Join(home, ".valet", "valetd.log")
+			logPath := filepath.Join(home, "Library", "Logs", "Valet", "valetd.log")
 
 			tail := exec.Command("tail", "-f", logPath)
 			tail.Stdout = os.Stdout

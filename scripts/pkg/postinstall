@@ -1,0 +1,40 @@
+#!/bin/bash
+# postinstall — runs as root after pkg installs files.
+# Sets up LaunchAgent, log directory, and CLI symlink for the installing user.
+
+set -e
+
+PLIST_NAME="run.loa.valetd"
+PLIST_SRC="/Applications/Valet.app/Contents/Resources/${PLIST_NAME}.plist"
+CLI_SRC="/Applications/Valet.app/Contents/Resources/bin/valet"
+CLI_DST="/usr/local/bin/valet"
+
+# Determine the real (console) user — pkg postinstall runs as root.
+CONSOLE_USER=$( /usr/bin/stat -f "%Su" /dev/console )
+CONSOLE_UID=$( /usr/bin/id -u "${CONSOLE_USER}" )
+CONSOLE_HOME="/Users/${CONSOLE_USER}"
+AGENT_DIR="${CONSOLE_HOME}/Library/LaunchAgents"
+LOG_DIR="${CONSOLE_HOME}/Library/Logs/Valet"
+
+# --- Log directory ---
+mkdir -p "${LOG_DIR}"
+chown "${CONSOLE_USER}" "${LOG_DIR}"
+
+# --- LaunchAgent setup ---
+mkdir -p "${AGENT_DIR}"
+
+# Template the home directory into the plist (launchd doesn't expand ~).
+sed "s|__HOME__|${CONSOLE_HOME}|g" "${PLIST_SRC}" > "${AGENT_DIR}/${PLIST_NAME}.plist"
+chown "${CONSOLE_USER}" "${AGENT_DIR}/${PLIST_NAME}.plist"
+
+# Unload any previous version, ignoring errors if not loaded.
+/bin/launchctl bootout "gui/${CONSOLE_UID}/${PLIST_NAME}" 2>/dev/null || true
+
+# Load the agent as the console user.
+/bin/launchctl bootstrap "gui/${CONSOLE_UID}" "${AGENT_DIR}/${PLIST_NAME}.plist"
+
+# --- CLI symlink ---
+mkdir -p /usr/local/bin
+ln -sf "${CLI_SRC}" "${CLI_DST}"
+
+exit 0

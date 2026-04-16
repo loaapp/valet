@@ -47,43 +47,87 @@ jobs:
           node-version: '22'
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
-      - name: Install create-dmg
-        run: brew install create-dmg
-      - name: Build Wails app
-        run: cd valetapp && wails build
-      - name: Bundle daemon inside app
-        working-directory: valetd
+
+      # --- Import signing certificates ---
+      - name: Install certificates
+        if: github.event_name == 'push'
+        env:
+          APPLE_CERT_APP: ${{ secrets.APPLE_CERT_APP }}
+          APPLE_CERT_INSTALLER: ${{ secrets.APPLE_CERT_INSTALLER }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
         run: |
+          # Create a temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import Application certificate
+          APP_P12=$RUNNER_TEMP/app.p12
+          echo "$APPLE_CERT_APP" | base64 --decode > "$APP_P12"
+          security import "$APP_P12" -P "$APPLE_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          rm "$APP_P12"
+
+          # Import Installer certificate
+          INST_P12=$RUNNER_TEMP/installer.p12
+          echo "$APPLE_CERT_INSTALLER" | base64 --decode > "$INST_P12"
+          security import "$INST_P12" -P "$APPLE_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          rm "$INST_P12"
+
+          # Allow codesign/productsign/notarytool to use the keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Prepend temporary keychain to search list
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+      # --- Build + sign + package ---
+      - name: Build signed package
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.0.0-snapshot' }}
+          APPLE_APP_IDENTITY: ${{ secrets.APPLE_APP_IDENTITY }}
+          APPLE_INSTALLER_IDENTITY: ${{ secrets.APPLE_INSTALLER_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          # Strip leading 'v' from tag (v0.1.0 -> 0.1.0)
+          export VERSION="${VERSION#v}"
+          ./scripts/build-pkg.sh
+
+      # --- Unsigned build for PRs ---
+      - name: Build app (unsigned)
+        if: github.event_name == 'pull_request'
+        run: |
+          cd valetapp && wails build
+          cd ../valetd
           go build -o ../valetapp/build/bin/Valet.app/Contents/MacOS/valetd ./cmd/valetd
-          go build -o ../valetapp/build/bin/Valet.app/Contents/MacOS/valet ./cmd/valet
-      - name: Create DMG
+          mkdir -p ../valetapp/build/bin/Valet.app/Contents/Resources/bin
+          go build -o ../valetapp/build/bin/Valet.app/Contents/Resources/bin/valet ./cmd/valet
+
+      # --- Cleanup keychain ---
+      - name: Cleanup keychain
+        if: always()
         run: |
-          create-dmg --volname "Valet" --window-size 600 400 \
-            --icon-size 100 --icon "Valet.app" 175 190 \
-            --app-drop-link 425 190 --no-internet-enable \
-            "Valet-snapshot.dmg" "valetapp/build/bin/" || true
-      # TODO: Code signing — add when Apple Developer certificate is in GitHub secrets
-      # - name: Sign app
-      #   run: |
-      #     codesign --force --deep --timestamp --options=runtime \
-      #       -s "${{ secrets.APPLE_IDENTITY }}" valetapp/build/bin/Valet.app
-      # TODO: Notarization — add when notary credentials are configured
-      # - name: Notarize DMG
-      #   run: |
-      #     xcrun notarytool submit Valet-snapshot.dmg \
-      #       --apple-id "${{ secrets.APPLE_ID }}" \
-      #       --team-id "${{ secrets.APPLE_TEAM_ID }}" \
-      #       --password "${{ secrets.APPLE_NOTARY_PASSWORD }}" --wait
-      #     xcrun stapler staple Valet-snapshot.dmg
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: valet-macos-pkg
+          path: build/Valet-*.pkg
       - uses: actions/upload-artifact@v4
         with:
-          name: valet-macos-dmg
-          path: Valet-snapshot.dmg
-      - uses: actions/upload-artifact@v4
-        with:
-          name: valet-macos-arm64
-          path: |
-            valetapp/build/bin/
+          name: valet-macos-app
+          path: valetapp/build/bin/
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -98,5 +142,5 @@ jobs:
         with:
           files: |
             daemon-linux-amd64/**
-            valet-macos-dmg/**
+            valet-macos-pkg/**
           generate_release_notes: true

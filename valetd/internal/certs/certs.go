@@ -27,13 +27,27 @@ func NewManager() (*Manager, error) {
 
 // MkcertAvailable checks if mkcert is installed.
 func MkcertAvailable() bool {
-	_, err := exec.LookPath("mkcert")
+	_, err := exec.LookPath(mkcertPath())
 	return err == nil
+}
+
+// mkcertPath returns the full path to mkcert, checking Homebrew locations
+// when running under launchd (which provides a minimal PATH).
+func mkcertPath() string {
+	if p, err := exec.LookPath("mkcert"); err == nil {
+		return p
+	}
+	for _, p := range []string{"/opt/homebrew/bin/mkcert", "/usr/local/bin/mkcert"} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "mkcert" // fall back to bare name
 }
 
 // InstallCA runs `mkcert -install` to install the local CA.
 func InstallCA() error {
-	cmd := exec.Command("mkcert", "-install")
+	cmd := exec.Command(mkcertPath(), "-install")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -45,7 +59,7 @@ func (m *Manager) GenerateCert(domain string) (string, string, error) {
 	certPath := filepath.Join(m.certsDir, domain+".pem")
 	keyPath := filepath.Join(m.certsDir, domain+"-key.pem")
 
-	cmd := exec.Command("mkcert",
+	cmd := exec.Command(mkcertPath(),
 		"-cert-file", certPath,
 		"-key-file", keyPath,
 		domain,
@@ -73,7 +87,7 @@ func (m *Manager) GenerateCombinedCert(domains []string) (string, string, error)
 	}
 	args = append(args, domains...)
 
-	cmd := exec.Command("mkcert", args...)
+	cmd := exec.Command(mkcertPath(), args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

@@ -45,6 +45,7 @@ func serveCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Start the daemon (default)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			db.MigrateDataDir()
 			setupLogging()
 
 			d := daemon.New(daemon.Config{
@@ -239,13 +240,20 @@ func withTLDs(fn func(*db.AppDB, []db.ManagedTLD) error) error {
 }
 
 func setupLogging() {
-	dir, err := db.DataDir()
+	logDir, err := db.LogDir()
 	if err != nil {
 		return
 	}
-	os.MkdirAll(dir, 0o755)
+	os.MkdirAll(logDir, 0o755)
 
-	logPath := filepath.Join(dir, "valetd.log")
+	logPath := filepath.Join(logDir, "valetd.log")
+
+	// Rotate if the log exceeds 5 MB.
+	if info, err := os.Stat(logPath); err == nil && info.Size() > 5*1024*1024 {
+		rotated := logPath + ".1"
+		os.Rename(logPath, rotated)
+	}
+
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return

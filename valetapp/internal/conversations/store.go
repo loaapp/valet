@@ -30,7 +30,7 @@ func New() (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(home, ".valet")
+	dir := filepath.Join(home, "Library", "Application Support", "run.loa.valet")
 	os.MkdirAll(dir, 0o755)
 
 	dbPath := filepath.Join(dir, "conversations.db")

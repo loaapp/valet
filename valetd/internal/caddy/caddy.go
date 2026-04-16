@@ -13,9 +13,17 @@ import (
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
 )
 
+func accessLogPath() string {
+	logDir, err := db.LogDir()
+	if err != nil {
+		return "/tmp/valet-access.log" // fallback
+	}
+	return filepath.Join(logDir, "access.log")
+}
+
 // BuildConfig generates a full Caddy JSON config from the current routes.
 // combinedCert/combinedKey point to a single mkcert cert covering all domains + localhost.
-func BuildConfig(routes []db.Route, combinedCert, combinedKey, dataDir string) ([]byte, error) {
+func BuildConfig(routes []db.Route, combinedCert, combinedKey, _ string) ([]byte, error) {
 	if len(routes) == 0 {
 		return emptyConfig()
 	}
@@ -65,7 +73,7 @@ func BuildConfig(routes []db.Route, combinedCert, combinedKey, dataDir string) (
 				"access": map[string]any{
 					"writer": map[string]any{
 						"output":   "file",
-						"filename": filepath.Join(dataDir, "access.log"),
+						"filename": accessLogPath(),
 					},
 					"encoder": map[string]any{"format": "json"},
 					"include": []string{"http.log.access.*"},

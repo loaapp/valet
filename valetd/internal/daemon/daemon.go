@@ -96,7 +96,12 @@ func (d *Daemon) Start() error {
 	}
 
 	// Redirect stderr to access.log so Caddy's structured logs are captured
-	accessLogPath := filepath.Join(dataDir, "access.log")
+	logDir, err := db.LogDir()
+	if err != nil {
+		return fmt.Errorf("log dir: %w", err)
+	}
+	os.MkdirAll(logDir, 0o755)
+	accessLogPath := filepath.Join(logDir, "access.log")
 	accessLogFile, err := os.OpenFile(accessLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		log.Printf("Warning: cannot open access log: %v", err)
@@ -115,7 +120,7 @@ func (d *Daemon) Start() error {
 
 	// Start log store and tailer
 	d.logStore = logstore.New(database.DB)
-	d.tailer = logbuf.NewTailer(filepath.Join(dataDir, "access.log"), d.logStore)
+	d.tailer = logbuf.NewTailer(accessLogPath, d.logStore)
 	d.tailer.Start()
 
 	// Wire log store into DNS server

@@ -1,46 +1,31 @@
-.PHONY: all build daemon cli app clean dev restart vet dmg sign notarize
+.PHONY: all build daemon cli app clean dev restart vet pkg sign
 
 VERSION ?= 0.1.0
-APPLE_IDENTITY ?= Developer ID Application: Richard Clayton
 
 all: build
 
 build: daemon cli app
 
 daemon:
-	@go build -o bin/valetd github.com/loaapp/valet/valetd/cmd/valetd
+	@cd valetd && go build -o ../bin/valetd ./cmd/valetd
 	@echo "Built bin/valetd"
 
 cli:
-	@go build -o bin/valet github.com/loaapp/valet/valetd/cmd/valet
+	@cd valetd && go build -o ../bin/valet ./cmd/valet
 	@echo "Built bin/valet"
 
 app:
 	@cd valetapp && wails build
-	@go build -o valetapp/build/bin/Valet.app/Contents/MacOS/valetd \
-		github.com/loaapp/valet/valetd/cmd/valetd
-	@go build -o valetapp/build/bin/Valet.app/Contents/MacOS/valet \
-		github.com/loaapp/valet/valetd/cmd/valet
+	@cd valetd && go build -o ../valetapp/build/bin/Valet.app/Contents/MacOS/valetd ./cmd/valetd
+	@mkdir -p valetapp/build/bin/Valet.app/Contents/Resources/bin
+	@cd valetd && go build -o ../valetapp/build/bin/Valet.app/Contents/Resources/bin/valet ./cmd/valet
 	@echo "Built Valet.app with bundled daemon"
 
-dmg: app
-	@rm -f Valet-$(VERSION).dmg
-	@create-dmg --volname "Valet" --window-size 600 400 \
-		--icon-size 100 --icon "Valet.app" 175 190 \
-		--app-drop-link 425 190 --no-internet-enable \
-		"Valet-$(VERSION).dmg" "valetapp/build/bin/" || true
-	@echo "Created Valet-$(VERSION).dmg"
+pkg:
+	@VERSION=$(VERSION) ./scripts/build-pkg.sh
 
-sign: app
-	@codesign --force --deep --timestamp --options=runtime \
-		-s "$(APPLE_IDENTITY)" valetapp/build/bin/Valet.app
-	@echo "Signed Valet.app"
-
-notarize: dmg
-	@xcrun notarytool submit Valet-$(VERSION).dmg \
-		--keychain-profile "valet-notary" --wait
-	@xcrun stapler staple Valet-$(VERSION).dmg
-	@echo "Notarized Valet-$(VERSION).dmg"
+pkg-unsigned:
+	@VERSION=$(VERSION) ./scripts/build-pkg.sh --no-notarize
 
 dev:
 	@cd valetapp && wails dev
@@ -51,13 +36,12 @@ restart: daemon
 	@echo "valetd restarted"
 
 clean:
-	@rm -rf bin/
+	@rm -rf bin/ build/
 	@rm -rf valetapp/build/bin/
-	@rm -f Valet-*.dmg
 	@echo "Cleaned"
 
 vet:
-	@go vet github.com/loaapp/valet/valetd/...
-	@go vet github.com/loaapp/valet/pkg/...
-	@go vet github.com/loaapp/valet/valetapp/...
+	@(cd valetd && go vet ./...)
+	@(cd pkg && go vet ./...)
+	@(cd valetapp && go vet ./...)
 	@echo "Vet passed"
