@@ -1,68 +1,52 @@
 # Valet
 
-Local development reverse proxy with trusted HTTPS, DNS management, and an AI assistant.
+> Trusted HTTPS for local development. DNS management. AI-powered configuration.
+
+![Dashboard](docs/images/dashboard.png)
+
+## What is Valet?
+
+Valet gives you trusted HTTPS on custom domain names for your local development services — with zero manual configuration. Add a route, get a certificate, hit it in the browser. No more `localhost:3000`.
+
+Manage everything from a native macOS app, the command line, or an AI assistant that can set up your entire dev environment in one conversation.
 
 ## Features
 
-- Embedded Caddy reverse proxy with zero-downtime config reloads
-- Trusted local HTTPS via mkcert (no browser warnings)
-- Local DNS server with custom domain/TLD support
-- Route templates (SPA+API, WebSocket, CORS, load-balanced)
-- Desktop GUI (Wails + Svelte 5) with theme support
-- AI assistant powered by ADK (Ollama, OpenAI-compatible)
-- MCP server for Claude Code integration
-- Real-time metrics dashboard with Chart.js
-- DNS query and HTTP access log viewer
-- A/CNAME record support for DNS entries
+### Trusted HTTPS on Any Domain
 
-## Prerequisites
+Route traffic from custom domains to your local services with automatic mkcert certificates. No browser warnings, no self-signed cert hassles.
 
-- Go 1.26+
-- Wails v2 (for the desktop app)
-- Node.js (for the frontend build)
-- mkcert (`brew install mkcert && mkcert -install`)
+![Routes](docs/images/routes.png)
 
-## Quick Start
+### Real-Time Metrics Dashboard
 
-```bash
-# Build everything
-make build
+Watch your traffic in real-time with a live Chart.js chart, per-route statistics, and summary metrics. All data persists in SQLite across restarts.
 
-# Start the daemon
-bin/valetd
+### DNS Management
 
-# Register a TLD with DNS resolver
-sudo bin/valetd tld add --tld test
+Register TLDs or override real domains — Valet runs a local DNS server that resolves your routes to localhost and forwards everything else to upstream DNS.
 
-# Add a route
-bin/valet add myapp.test localhost:3000
+![TLDs & DNS Entries](docs/images/tlds.png)
 
-# Open https://myapp.test in your browser
-```
+Register a TLD with one command:
 
-## Architecture
+![TLD Registration](docs/images/tld-add.png)
 
-This is a monorepo with three modules:
+### HTTP & DNS Log Viewer
 
-- **`pkg/`** — shared libraries (Caddy manager, DNS server, mkcert integration, config store)
-- **`valetd/`** — daemon (`valetd`) and CLI (`valet`) binaries, REST API, MCP server, AI assistant
-- **`valetapp/`** — desktop GUI built with Wails + Svelte 5
+See every request and DNS query flowing through Valet with live-updating log tables. Filter by route, toggle auto-scroll, clear when needed.
 
-The daemon manages an embedded Caddy reverse proxy and a DNS server. Configuration is stored in `~/.valet/valet.db` (SQLite) and certificates live in `~/.valet/certs/`.
+![HTTP Logs](docs/images/logs.png)
 
-## GUI
+![DNS Logs](docs/images/dns-logs.png)
 
-Run the desktop app in development mode:
+### AI Assistant
 
-```bash
-make dev
-```
+An in-app AI assistant powered by ADK that can manage routes, diagnose issues, and configure your entire setup through natural language. Works with Ollama, or any OpenAI-compatible endpoint.
 
-This launches the Wails dev server with hot-reload for the Svelte frontend.
+### MCP Server for Claude Code
 
-## MCP Integration
-
-Valet includes an MCP server so Claude Code can manage routes, TLDs, and DNS records directly. Add this to your Claude Code MCP config:
+Valet exposes an MCP server so Claude Code can manage your proxy configuration directly from the terminal.
 
 ```json
 {
@@ -75,11 +59,48 @@ Valet includes an MCP server so Claude Code can manage routes, TLDs, and DNS rec
 }
 ```
 
-## DNS
+### And more...
 
-Valet runs a local DNS server on port 15353. When you register a TLD (e.g., `test`), Valet installs a macOS resolver file (`/etc/resolver/test`) that directs lookups for `*.test` to the local DNS server.
+- Route templates (SPA+API, WebSocket, CORS, load-balanced)
+- 4 themes (macOS Dark, macOS Light, Nord, Rose Pine)
+- A/CNAME record support for DNS entries
+- Advanced routing with path rules, headers, compression
+- Input validation (Zod + Go)
+- Caddy config preview before saving
 
-**macOS limitation:** the resolver system only supports a single subdomain level. `myapp.test` works; `api.myapp.test` does not resolve through `/etc/resolver`.
+## Install
+
+Download the latest DMG from [Releases](https://github.com/loaapp/valet/releases).
+
+Or build from source:
+
+```bash
+make build
+```
+
+See [Building from Source](docs/building.md) for prerequisites and details.
+
+## Quick Start
+
+```bash
+# Start the daemon
+valetd
+
+# Register a TLD with DNS resolver (one-time, requires sudo)
+sudo valetd tld add --tld test
+
+# Add a route
+valet add myapp.test localhost:3000
+
+# Visit https://myapp.test in your browser
+```
+
+## Documentation
+
+- [Building from Source](docs/building.md)
+- [DNS Configuration](docs/dns.md)
+- [MCP Integration](docs/mcp.md)
+- [Contributing](docs/contributing.md)
 
 ## License
 

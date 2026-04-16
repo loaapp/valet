@@ -47,9 +47,16 @@
     }
   });
 
-  function handleClear() {
-    if (tab === 'http') clearLogs();
-    else clearDnsLogs();
+  async function handleClear() {
+    if (tab === 'http') {
+      stopPolling();
+      await clearLogs();
+      startPolling();
+    } else {
+      stopDnsPolling();
+      await clearDnsLogs();
+      startDnsPolling();
+    }
   }
 
   onMount(() => {

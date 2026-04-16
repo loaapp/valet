@@ -3,6 +3,13 @@ package main
 import (
 	"context"
 	"embed"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"syscall"
+	"time"
 
 	"github.com/loaapp/valet/pkg/client"
 	"github.com/loaapp/valet/valetapp/internal/api"
@@ -13,6 +20,47 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+// ensureDaemon checks if valetd is running, and if not, launches it from
+// the same directory as the current executable (i.e. inside the app bundle).
+func ensureDaemon() {
+	client := &http.Client{Timeout: 1 * time.Second}
+	if resp, err := client.Get("http://localhost:7800/api/v1/status"); err == nil {
+		resp.Body.Close()
+		return
+	}
+
+	// Find valetd next to our binary
+	exe, err := os.Executable()
+	if err != nil {
+		log.Printf("ensureDaemon: could not find executable path: %v", err)
+		return
+	}
+	valetdPath := filepath.Join(filepath.Dir(exe), "valetd")
+	if _, err := os.Stat(valetdPath); err != nil {
+		log.Printf("ensureDaemon: valetd not found at %s", valetdPath)
+		return
+	}
+
+	// Launch detached
+	cmd := exec.Command(valetdPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		log.Printf("ensureDaemon: failed to start valetd: %v", err)
+		return
+	}
+
+	// Wait up to 3 seconds for it to become available
+	for i := 0; i < 30; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if resp, err := client.Get("http://localhost:7800/api/v1/status"); err == nil {
+			resp.Body.Close()
+			log.Printf("ensureDaemon: valetd started successfully (pid %d)", cmd.Process.Pid)
+			return
+		}
+	}
+	log.Printf("ensureDaemon: valetd started but not responding after 3s")
+}
 
 func main() {
 	c := client.New()
@@ -34,6 +82,7 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 24, G: 24, B: 27, A: 1},
 		OnStartup: func(ctx context.Context) {
+			ensureDaemon()
 			statusSvc.SetContext(ctx)
 			routeSvc.SetContext(ctx)
 			tldSvc.SetContext(ctx)

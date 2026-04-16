@@ -61,7 +61,9 @@ func New(addr string, database *sql.DB, routeMgr *routes.Manager, certMgr *certs
 	mux.HandleFunc("GET /api/v1/metrics/current", s.handleMetricsCurrent)
 	mux.HandleFunc("GET /api/v1/metrics/history", s.handleMetricsHistory)
 	mux.HandleFunc("GET /api/v1/logs", s.handleLogs)
+	mux.HandleFunc("DELETE /api/v1/logs", s.handleClearHTTPLogs)
 	mux.HandleFunc("GET /api/v1/dns/logs", s.handleDNSLogs)
+	mux.HandleFunc("DELETE /api/v1/dns/logs", s.handleClearDNSLogs)
 	mux.HandleFunc("GET /api/v1/dns/entries", s.handleListDNSEntries)
 	mux.HandleFunc("POST /api/v1/dns/entries", s.handleCreateDNSEntry)
 	mux.HandleFunc("DELETE /api/v1/dns/entries/{domain...}", s.handleDeleteDNSEntry)
@@ -822,6 +824,30 @@ func (s *Server) handleDNSLogs(w http.ResponseWriter, r *http.Request) {
 		entries = []logstore.DNSLogEntry{}
 	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+func (s *Server) handleClearHTTPLogs(w http.ResponseWriter, r *http.Request) {
+	if s.logStore == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+	if err := s.logStore.ClearHTTP(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
+}
+
+func (s *Server) handleClearDNSLogs(w http.ResponseWriter, r *http.Request) {
+	if s.logStore == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+	if err := s.logStore.ClearDNS(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
 }
 
 // --- Helpers ---

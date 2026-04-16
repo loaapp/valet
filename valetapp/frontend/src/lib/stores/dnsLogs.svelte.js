@@ -1,4 +1,4 @@
-import { GetDNSLogs } from '../../../wailsjs/go/api/LogsService.js';
+import { GetDNSLogs, ClearDNSLogs } from '../../../wailsjs/go/api/LogsService.js';
 
 let logs = $state([]);
 let timer = null;
@@ -22,6 +22,7 @@ export function stopPolling() {
   if (timer) { clearInterval(timer); timer = null; }
 }
 
-export function clearDnsLogs() {
+export async function clearDnsLogs() {
+  try { await ClearDNSLogs(); } catch {}
   logs = [];
 }

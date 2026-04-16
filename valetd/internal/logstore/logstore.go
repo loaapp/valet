@@ -143,6 +143,18 @@ func (s *Store) GetDNSLogs(limit int) ([]DNSLogEntry, error) {
 	return entries, nil
 }
 
+// ClearHTTP deletes all HTTP log entries.
+func (s *Store) ClearHTTP() error {
+	_, err := s.db.Exec(`DELETE FROM http_logs`)
+	return err
+}
+
+// ClearDNS deletes all DNS log entries.
+func (s *Store) ClearDNS() error {
+	_, err := s.db.Exec(`DELETE FROM dns_logs`)
+	return err
+}
+
 // Cleanup deletes log entries older than 24 hours from both tables.
 func (s *Store) Cleanup() error {
 	cutoff := float64(time.Now().Unix()) - 86400

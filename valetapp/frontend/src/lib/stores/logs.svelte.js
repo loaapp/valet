@@ -1,4 +1,4 @@
-import { GetLogs, GetLogsSince } from '../../../wailsjs/go/api/LogsService.js';
+import { GetLogs, GetLogsSince, ClearHTTPLogs } from '../../../wailsjs/go/api/LogsService.js';
 
 let logs = $state([]);
 let lastTs = $state(0);
@@ -32,7 +32,8 @@ export function stopPolling() {
   }
 }
 
-export function clearLogs() {
+export async function clearLogs() {
+  try { await ClearHTTPLogs(); } catch {}
   logs = [];
   lastTs = 0;
 }

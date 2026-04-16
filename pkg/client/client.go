@@ -240,6 +240,14 @@ func (c *Client) GetLogs(limit int, since float64, route string) ([]map[string]a
 	return result, nil
 }
 
+func (c *Client) ClearHTTPLogs() error {
+	return c.del("/api/v1/logs")
+}
+
+func (c *Client) ClearDNSLogs() error {
+	return c.del("/api/v1/dns/logs")
+}
+
 // Internal HTTP helpers
 
 func (c *Client) get(path string, out any) error {
