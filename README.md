@@ -53,7 +53,9 @@ See every request and DNS query flowing through Valet with live-updating log tab
 
 ### AI Assistant
 
-An in-app AI assistant powered by ADK that can manage routes, diagnose issues, and configure your entire setup through natural language. Works with Ollama, or any OpenAI-compatible endpoint.
+An in-app AI assistant that can manage routes, register DNS entries, diagnose issues, and configure your entire setup through natural language. Conversation history persists across restarts.
+
+![AI Assistant](docs/images/assistant.png)
 
 ### MCP Server for Claude Code
 
