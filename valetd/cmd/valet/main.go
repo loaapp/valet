@@ -216,7 +216,7 @@ func tldCmd() *cobra.Command {
 			if _, err := c.CreateTLD(args[0]); err != nil {
 				return err
 			}
-			fmt.Printf("TLD .%s registered. Run 'valet trust' to install the DNS resolver.\n", args[0])
+			fmt.Printf("TLD .%s registered. Install the DNS resolver with:\n  sudo valetd tld add --tld %s\n", args[0], args[0])
 			return nil
 		},
 	})

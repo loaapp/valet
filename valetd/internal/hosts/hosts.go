@@ -31,7 +31,7 @@ func Sync(domains []string) error {
 
 	if err := os.WriteFile(hostsFile, []byte(updated), 0o644); err != nil {
 		if os.IsPermission(err) {
-			log.Printf("Warning: cannot update /etc/hosts (permission denied). Run 'sudo valet trust' or add entries manually.")
+			log.Printf("Warning: cannot update /etc/hosts (permission denied). Use 'sudo valetd tld add --tld <tld>' to install a resolver instead.")
 			return nil
 		}
 		return fmt.Errorf("write hosts file: %w", err)
