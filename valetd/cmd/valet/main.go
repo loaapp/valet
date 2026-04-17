@@ -11,6 +11,7 @@ import (
 	"github.com/loaapp/valet/pkg/client"
 	"github.com/loaapp/valet/pkg/models"
 	"github.com/loaapp/valet/valetd/internal/daemon"
+	"github.com/loaapp/valet/valetd/internal/resolver"
 	"github.com/spf13/cobra"
 )
 
@@ -210,26 +211,41 @@ func tldCmd() *cobra.Command {
 
 	tld.AddCommand(&cobra.Command{
 		Use:   "add <tld>",
-		Short: "Register a managed TLD (e.g., valet tld add test)",
+		Short: "Register a TLD and install its DNS resolver (requires sudo)",
+		Example: "  sudo valet tld add test          # all *.test -> local DNS\n  sudo valet tld add example.com   # all *.example.com -> local DNS",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Register via API
 			if _, err := c.CreateTLD(args[0]); err != nil {
 				return err
 			}
-			fmt.Printf("TLD .%s registered. Install the DNS resolver with:\n  sudo valetd tld add --tld %s\n", args[0], args[0])
+			fmt.Printf("Registered .%s\n", args[0])
+
+			// Install resolver file (requires sudo)
+			if err := resolver.Install(args[0]); err != nil {
+				return fmt.Errorf("install resolver for .%s: %w\n(hint: run with sudo)", args[0], err)
+			}
+
+			fmt.Printf("Installed /etc/resolver/%s\n", args[0])
+			fmt.Printf("Done. All *.%s domains will resolve to 127.0.0.1\n", args[0])
 			return nil
 		},
 	})
 
 	tld.AddCommand(&cobra.Command{
 		Use:   "remove <tld>",
-		Short: "Unregister a managed TLD",
+		Short: "Unregister a TLD and remove its DNS resolver (requires sudo)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Remove resolver file first (requires sudo)
+			if err := resolver.Remove(args[0]); err != nil {
+				return fmt.Errorf("remove resolver for .%s: %w\n(hint: run with sudo)", args[0], err)
+			}
+
 			if err := c.DeleteTLD(args[0]); err != nil {
 				return err
 			}
-			fmt.Printf("TLD .%s removed\n", args[0])
+			fmt.Printf("TLD .%s removed and resolver uninstalled\n", args[0])
 			return nil
 		},
 	})

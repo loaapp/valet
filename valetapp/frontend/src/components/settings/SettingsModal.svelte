@@ -142,7 +142,7 @@
                   <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
                 <p>No managed TLDs configured yet.</p>
-                <p class="hint">Run <code>sudo valetd tld add --tld test</code> to register a TLD and install its DNS resolver in one step.</p>
+                <p class="hint">Run <code>sudo valet tld add test</code> to register a TLD and install its DNS resolver in one step.</p>
               </div>
             {:else}
               <div class="dns-table">
@@ -160,11 +160,11 @@
             <div class="dns-instructions">
               <h4>Managing TLDs</h4>
               <p class="hint">Add a TLD and install its DNS resolver in one step:</p>
-              <code class="dns-command">sudo valetd tld add --tld test</code>
+              <code class="dns-command">sudo valet tld add test</code>
               <p class="hint" style="margin-top: 0.75rem">Remove a TLD and its resolver:</p>
-              <code class="dns-command">sudo valetd tld remove --tld test</code>
+              <code class="dns-command">sudo valet tld remove test</code>
               <p class="hint" style="margin-top: 0.75rem">Check status:</p>
-              <code class="dns-command">valetd tld list</code>
+              <code class="dns-command">valet tld list</code>
             </div>
           </div>
           {/if}

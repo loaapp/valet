@@ -47,7 +47,7 @@
 
       {#if !tld.resolverInstalled}
         <div class="resolver-hint">
-          Resolver missing. Run: <code>sudo valetd tld add --tld {tld.tld}</code>
+          Resolver missing. Run: <code>sudo valet tld add {tld.tld}</code>
         </div>
       {/if}
 
@@ -76,7 +76,7 @@
     </div>
   {:else}
     <div class="empty">
-      No TLDs configured. Add one via CLI: <code>sudo valetd tld add --tld example</code>
+      No TLDs configured. Add one via CLI: <code>sudo valet tld add example</code>
     </div>
   {/each}
 
