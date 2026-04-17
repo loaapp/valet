@@ -92,7 +92,14 @@ func mcpCmd() *cobra.Command {
 			}
 
 			dnsServer := dns.NewServer()
-			routeSvc := domain.NewRouteService(database.DB, certMgr, dnsServer, dataDir)
+			routeSvc := domain.NewRouteService(database.DB,
+				&domain.CertManagerAdapter{Mgr: certMgr},
+				domain.CaddyAdapter{},
+				&domain.DNSAdapter{Server: dnsServer},
+				domain.HostsAdapter{},
+				domain.ResolverAdapter{},
+				dataDir,
+			)
 			tldSvc := domain.NewTLDService(database.DB, dnsServer)
 			dnsEntrySvc := domain.NewDNSEntryService(database.DB, dnsServer)
 			mcpSrv := mcpserver.New(routeSvc, tldSvc, dnsEntrySvc)

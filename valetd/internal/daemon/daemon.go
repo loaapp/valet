@@ -77,7 +77,14 @@ func (d *Daemon) Start() error {
 	d.dnsServer = dns.NewServer()
 
 	// Create domain services
-	d.routeSvc = domain.NewRouteService(database.DB, certMgr, d.dnsServer, dataDir)
+	d.routeSvc = domain.NewRouteService(database.DB,
+		&domain.CertManagerAdapter{Mgr: certMgr},
+		domain.CaddyAdapter{},
+		&domain.DNSAdapter{Server: d.dnsServer},
+		domain.HostsAdapter{},
+		domain.ResolverAdapter{},
+		dataDir,
+	)
 	d.tldSvc = domain.NewTLDService(database.DB, d.dnsServer)
 	d.dnsEntrySvc = domain.NewDNSEntryService(database.DB, d.dnsServer)
 

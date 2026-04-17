@@ -9,22 +9,21 @@ import (
 	"time"
 
 	"github.com/loaapp/valet/valetd/internal/caddy"
-	"github.com/loaapp/valet/valetd/internal/certs"
 	"github.com/loaapp/valet/valetd/internal/db"
-	"github.com/loaapp/valet/valetd/internal/dns"
-	"github.com/loaapp/valet/valetd/internal/hosts"
-	"github.com/loaapp/valet/valetd/internal/resolver"
 )
 
 type RouteService struct {
-	db        *sql.DB
-	certMgr   *certs.Manager
-	dnsServer *dns.Server
-	dataDir   string
+	db       *sql.DB
+	certMgr  CertManager
+	caddy    CaddyReloader
+	dns      DNSUpdater
+	hosts    HostsSyncer
+	resolver ResolverChecker
+	dataDir  string
 }
 
-func NewRouteService(database *sql.DB, certMgr *certs.Manager, dnsServer *dns.Server, dataDir string) *RouteService {
-	return &RouteService{db: database, certMgr: certMgr, dnsServer: dnsServer, dataDir: dataDir}
+func NewRouteService(database *sql.DB, certMgr CertManager, caddy CaddyReloader, dns DNSUpdater, hosts HostsSyncer, resolver ResolverChecker, dataDir string) *RouteService {
+	return &RouteService{db: database, certMgr: certMgr, caddy: caddy, dns: dns, hosts: hosts, resolver: resolver, dataDir: dataDir}
 }
 
 func (s *RouteService) Add(req AddRouteRequest) (*db.Route, error) {
@@ -53,7 +52,7 @@ func (s *RouteService) Add(req AddRouteRequest) (*db.Route, error) {
 	}
 
 	// Check mkcert
-	if !certs.MkcertAvailable() {
+	if !s.certMgr.MkcertAvailable() {
 		return nil, fmt.Errorf("mkcert is not installed; run: brew install mkcert && mkcert -install")
 	}
 
@@ -166,7 +165,7 @@ func (s *RouteService) Remove(domain string) error {
 	if err := db.DeleteRoute(s.db, route.ID); err != nil {
 		return err
 	}
-	s.certMgr.RemoveCert(domain)
+	_ = s.certMgr.RemoveCert(domain)
 	return s.Sync()
 }
 
@@ -258,7 +257,7 @@ func (s *RouteService) Sync() error {
 	}
 
 	var combinedCert, combinedKey string
-	if len(tlsDomains) > 0 && certs.MkcertAvailable() {
+	if len(tlsDomains) > 0 && s.certMgr.MkcertAvailable() {
 		combinedCert, combinedKey, err = s.certMgr.GenerateCombinedCert(tlsDomains)
 		if err != nil {
 			return fmt.Errorf("generate combined cert: %w", err)
@@ -266,7 +265,7 @@ func (s *RouteService) Sync() error {
 	}
 
 	// Reload Caddy
-	if err := caddy.Reload(routes, combinedCert, combinedKey, s.dataDir); err != nil {
+	if err := s.caddy.Reload(routes, combinedCert, combinedKey, s.dataDir); err != nil {
 		return fmt.Errorf("caddy reload: %w", err)
 	}
 
@@ -275,7 +274,7 @@ func (s *RouteService) Sync() error {
 	for _, r := range routes {
 		allDomains = append(allDomains, r.Domain)
 	}
-	s.dnsServer.SetDomains(allDomains)
+	s.dns.SetDomains(allDomains)
 
 	// Hosts file fallback for domains without resolver
 	tlds, err := db.ListTLDs(s.db)
@@ -291,11 +290,11 @@ func (s *RouteService) Sync() error {
 	for _, r := range routes {
 		tld := extractTLD(r.Domain)
 		parent := extractParentDomain(r.Domain)
-		if !managedTLDs[tld] && !resolver.IsInstalled(parent) && !resolver.IsInstalled(tld) {
+		if !managedTLDs[tld] && !s.resolver.IsInstalled(parent) && !s.resolver.IsInstalled(tld) {
 			hostsDomains = append(hostsDomains, r.Domain)
 		}
 	}
-	if err := hosts.Sync(hostsDomains); err != nil {
+	if err := s.hosts.Sync(hostsDomains); err != nil {
 		return fmt.Errorf("hosts sync: %w", err)
 	}
 	return nil
