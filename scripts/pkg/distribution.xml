@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Valet</title>
+    <organization>run.loa</organization>
+    <welcome language="en" mime-type="text/html"><![CDATA[
+        <html>
+        <body style="font-family: -apple-system, Helvetica Neue, sans-serif; font-size: 13px; color: #333;">
+            <h2>Valet</h2>
+            <p>Local development reverse proxy manager for macOS.</p>
+            <p>This installer will:</p>
+            <ul>
+                <li>Install <strong>Valet.app</strong> to /Applications</li>
+                <li>Start the <strong>valetd</strong> daemon automatically on login</li>
+                <li>Add the <strong>valet</strong> CLI to your PATH</li>
+            </ul>
+            <p style="margin-top: 16px; color: #888; font-size: 11px;">
+                &copy; Richard Clayton. All rights reserved.
+            </p>
+        </body>
+        </html>
+    ]]></welcome>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <choices-outline>
+        <line choice="default"/>
+    </choices-outline>
+    <choice id="default" title="Valet">
+        <pkg-ref id="run.loa.valet"/>
+    </choice>
+    <pkg-ref id="run.loa.valet" version="__VERSION__" installKBytes="__SIZE__">#Valet-component.pkg</pkg-ref>
+</installer-gui-script>

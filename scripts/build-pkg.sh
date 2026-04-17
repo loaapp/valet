@@ -108,16 +108,23 @@ pkgbuild \
     --install-location "/" \
     "${COMPONENT_PKG}"
 
+# Build the distribution XML from template
+DIST_XML="${ROOT_DIR}/build/distribution.xml"
+INSTALL_KB=$(du -sk "${PKG_ROOT}" | cut -f1)
+sed -e "s/__VERSION__/${VERSION}/g" -e "s/__SIZE__/${INSTALL_KB}/g" \
+    "${SCRIPT_DIR}/pkg/distribution.xml" > "${DIST_XML}"
+
 # Build the product archive (distribution pkg) and sign it
 productbuild \
-    --package "${COMPONENT_PKG}" \
+    --distribution "${DIST_XML}" \
+    --package-path "${ROOT_DIR}/build" \
     --sign "${APPLE_INSTALLER_IDENTITY}" \
     "${OUTPUT_PKG}"
 
 echo "--- Package built: ${OUTPUT_PKG}"
 
 # Clean up intermediate files
-rm -rf "${PKG_ROOT}" "${PKG_SCRIPTS}" "${COMPONENT_PKG}"
+rm -rf "${PKG_ROOT}" "${PKG_SCRIPTS}" "${COMPONENT_PKG}" "${DIST_XML}"
 
 # ---- Step 4: Notarize ----
 if [ "${NOTARIZE}" = true ]; then
