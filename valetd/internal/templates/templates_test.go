@@ -7,7 +7,7 @@ import (
 )
 
 func TestGet(t *testing.T) {
-	slugs := []string{"simple", "spa-api", "websocket", "cors-proxy", "multi-upstream"}
+	slugs := []string{"simple", "static", "spa-api", "websocket", "cors-proxy", "multi-upstream", "custom"}
 	for _, slug := range slugs {
 		t.Run(slug, func(t *testing.T) {
 			tmpl := Get(slug)
@@ -32,8 +32,8 @@ func TestGet(t *testing.T) {
 }
 
 func TestRegistryLength(t *testing.T) {
-	if len(Registry) != 5 {
-		t.Errorf("Registry has %d templates, want 5", len(Registry))
+	if len(Registry) != 7 {
+		t.Errorf("Registry has %d templates, want 7", len(Registry))
 	}
 }
 
@@ -45,6 +45,46 @@ func TestSimple(t *testing.T) {
 	}
 	if match != "" || handler != "" {
 		t.Errorf("simple template should return empty configs, got match=%q handler=%q", match, handler)
+	}
+}
+
+func TestStatic(t *testing.T) {
+	tmpl := Get("static")
+
+	// Missing required root
+	_, _, err := tmpl.Apply(map[string]string{})
+	if err == nil {
+		t.Error("expected error for missing root")
+	}
+
+	// Basic file server
+	_, handler, err := tmpl.Apply(map[string]string{"root": "/Users/me/project/dist"})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !json.Valid([]byte(handler)) {
+		t.Fatal("handler is not valid JSON")
+	}
+	if !strings.Contains(handler, "file_server") {
+		t.Error("handler should contain file_server")
+	}
+	if !strings.Contains(handler, "/Users/me/project/dist") {
+		t.Error("handler should contain root path")
+	}
+	if strings.Contains(handler, "browse") {
+		t.Error("browse should not be set by default")
+	}
+
+	// With directory browsing
+	_, handler, err = tmpl.Apply(map[string]string{
+		"root":   "/Users/me/docs",
+		"browse": "true",
+	})
+	if err != nil {
+		t.Fatalf("Apply with browse: %v", err)
+	}
+	if !strings.Contains(handler, "browse") {
+		t.Error("handler should contain browse when enabled")
 	}
 }
 
@@ -183,6 +223,60 @@ func TestMultiUpstream(t *testing.T) {
 	}
 	if !strings.Contains(handler, "localhost:8080") {
 		t.Error("handler should trim spaces and contain upstream")
+	}
+}
+
+func TestCustom(t *testing.T) {
+	tmpl := Get("custom")
+
+	// Missing required handlerJson
+	_, _, err := tmpl.Apply(map[string]string{})
+	if err == nil {
+		t.Error("expected error for missing handlerJson")
+	}
+
+	// Invalid JSON
+	_, _, err = tmpl.Apply(map[string]string{"handlerJson": "not json"})
+	if err == nil {
+		t.Error("expected error for invalid handler JSON")
+	}
+
+	// Valid handler only
+	match, handler, err := tmpl.Apply(map[string]string{
+		"handlerJson": `[{"handler":"reverse_proxy","upstreams":[{"dial":"localhost:3000"}]}]`,
+	})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !json.Valid([]byte(handler)) {
+		t.Error("handler should be valid JSON")
+	}
+	if match != "" {
+		t.Error("match should be empty when matchJson not provided")
+	}
+
+	// Valid handler + match
+	match, handler, err = tmpl.Apply(map[string]string{
+		"handlerJson": `[{"handler":"file_server","root":"/tmp"}]`,
+		"matchJson":   `[{"path":["/docs/*"]}]`,
+	})
+	if err != nil {
+		t.Fatalf("Apply with match: %v", err)
+	}
+	if !json.Valid([]byte(handler)) {
+		t.Error("handler should be valid JSON")
+	}
+	if !json.Valid([]byte(match)) {
+		t.Error("match should be valid JSON")
+	}
+
+	// Invalid matchJson
+	_, _, err = tmpl.Apply(map[string]string{
+		"handlerJson": `[{"handler":"reverse_proxy"}]`,
+		"matchJson":   "broken",
+	})
+	if err == nil {
+		t.Error("expected error for invalid match JSON")
 	}
 }
 

@@ -1,34 +1,30 @@
 <script>
-  import { addRoute, updateRoute, getTemplates, previewRoute } from '../../lib/stores/routes.svelte.js';
+  import { addRoute, updateRoute, getRoutes, getTemplates, previewRoute } from '../../lib/stores/routes.svelte.js';
+  import { getTlds } from '../../lib/stores/tlds.svelte.js';
   import { validateRoute, validateField } from '../../lib/validation.js';
+  import { PickDirectory } from '../../../wailsjs/go/api/DialogService.js';
 
   let { route = null, onClose } = $props();
 
-  // Form is remounted for each edit, so capturing initial values is intentional.
   const _route = $state.snapshot(route);
   const editId = _route?.id ?? null;
   const isEdit = !!editId;
 
-  // Parse JSON config strings from the route (they come as strings from the API)
+  // --- State ---
+  let domain = $state(_route?.domain ?? '');
+  let upstream = $state(_route?.upstream ?? '');
+  let description = $state(_route?.description ?? '');
+  const originalTemplate = _route?.template || 'simple';
+  let selectedTemplate = $state(originalTemplate);
+  let templateParams = $state(inferTemplateParams(_route));
+
+  // Advanced options
   function parseJson(str) {
     if (!str) return null;
     try { return JSON.parse(str); } catch { return null; }
   }
   const parsedMatch = parseJson(_route?.matchConfig);
   const parsedHandler = parseJson(_route?.handlerConfig);
-
-  // Simple fields
-  let domain = $state(_route?.domain ?? '');
-  let upstream = $state(_route?.upstream ?? '');
-  let tls = $state(true); // Always force HTTPS
-  let description = $state(_route?.description ?? '');
-
-  // Mode: 'simple' | 'template' | (simple with advanced expanded)
-  let selectedTemplate = $state(_route?.template ?? '');
-  let templateParams = $state({});
-  let showTemplatePicker = $state(false);
-
-  // Advanced options — auto-expand if route has advanced config
   const hasExistingAdvanced = !!(_route?.matchConfig || _route?.handlerConfig);
   let showAdvanced = $state(hasExistingAdvanced);
   let pathRules = $state(parsedMatch?.path ?? ['']);
@@ -38,68 +34,139 @@
   let stripPathPrefix = $state(parsedHandler?.stripPathPrefix ?? '');
   let customHeaders = $state(parsedHandler?.responseHeaders ?? [{ key: '', value: '' }]);
 
-  // Preview
   let previewJson = $state('');
   let showPreview = $state(false);
   let copied = $state(false);
-
   let saving = $state(false);
   let error = $state('');
   let fieldErrors = $state({});
 
-  // Initialize template params from existing route
-  if (_route?.templateParams) {
-    templateParams = { ..._route.templateParams };
+  // Reconstruct template params from stored handlerConfig/matchConfig on edit.
+  function inferTemplateParams(route) {
+    if (!route) return {};
+    if (route.templateParams && Object.keys(route.templateParams).length > 0) {
+      return { ...route.templateParams };
+    }
+
+    const handler = parseJson(route.handlerConfig);
+    const match = parseJson(route.matchConfig);
+    const params = {};
+
+    if (route.template === 'static' && Array.isArray(handler)) {
+      const fs = handler.find(h => h.handler === 'file_server');
+      if (fs) {
+        params.root = fs.root || '';
+        params.browse = fs.browse != null ? 'true' : 'false';
+      }
+    } else if (route.template === 'custom') {
+      params.handlerJson = route.handlerConfig || '';
+      params.matchJson = route.matchConfig || '';
+    } else if (route.template === 'spa-api' && Array.isArray(handler)) {
+      const subroute = handler.find(h => h.handler === 'subroute');
+      if (subroute?.routes) {
+        const apiRoute = subroute.routes.find(r => r.match);
+        if (apiRoute?.handle?.[0]?.upstreams?.[0]?.dial) {
+          params.apiUpstream = apiRoute.handle[0].upstreams[0].dial;
+        }
+        if (apiRoute?.match?.[0]?.path?.[0]) {
+          params.apiPath = apiRoute.match[0].path[0];
+        }
+        const fallback = subroute.routes.find(r => !r.match);
+        if (fallback?.handle?.[0]?.upstreams?.[0]?.dial) {
+          params.frontendUpstream = fallback.handle[0].upstreams[0].dial;
+        }
+      }
+    } else if (route.template === 'cors-proxy' && Array.isArray(handler)) {
+      const headers = handler.find(h => h.handler === 'headers');
+      if (headers?.response?.set?.['Access-Control-Allow-Origin']?.[0]) {
+        params.allowOrigin = headers.response.set['Access-Control-Allow-Origin'][0];
+      }
+    } else if (route.template === 'multi-upstream' && Array.isArray(handler)) {
+      const rp = handler.find(h => h.handler === 'reverse_proxy');
+      if (rp?.upstreams) {
+        params.upstreams = rp.upstreams.map(u => u.dial).join(',');
+      }
+    }
+
+    return params;
   }
 
-  function buildRequest() {
-    const req = {
-      domain: domain.trim(),
-      upstream: upstream.trim(),
-      tls,
-      description: description.trim(),
-    };
+  // --- Domain autocomplete ---
+  let showSuggestions = $state(false);
+  let domainFocused = $state(false);
 
-    if (selectedTemplate) {
-      req.template = selectedTemplate;
-      req.templateParams = { ...templateParams };
-    }
+  function getDomainSuggestions() {
+    const typed = domain.trim().toLowerCase();
+    if (!typed) return [];
 
-    // Build matchConfig from advanced options
-    const filteredPaths = pathRules.filter(p => p.trim());
-    if (filteredPaths.length > 0) {
-      req.matchConfig = { path: filteredPaths };
-    }
+    const tlds = getTlds();
+    const existingDomains = new Set(getRoutes().map(r => r.domain));
 
-    // Build handlerConfig from advanced options
-    const hc = {};
-    let hasHandler = false;
+    // If user already typed a dot, don't suggest
+    if (typed.includes('.')) return [];
 
-    if (corsEnabled) {
-      hc.cors = { allowOrigin: corsAllowOrigin.trim() || '*' };
-      hasHandler = true;
-    }
-    if (compressionEnabled) {
-      hc.compression = { encodings: ['gzip', 'zstd'] };
-      hasHandler = true;
-    }
-    if (stripPathPrefix.trim()) {
-      hc.stripPathPrefix = stripPathPrefix.trim();
-      hasHandler = true;
-    }
-    const filteredHeaders = customHeaders.filter(h => h.key.trim());
-    if (filteredHeaders.length > 0) {
-      hc.responseHeaders = filteredHeaders.map(h => ({ key: h.key.trim(), value: h.value.trim() }));
-      hasHandler = true;
-    }
-
-    if (hasHandler) {
-      req.handlerConfig = hc;
-    }
-
-    return req;
+    return tlds
+      .map(t => `${typed}.${t.tld}`)
+      .filter(d => !existingDomains.has(d));
   }
 
+  function selectSuggestion(suggestion) {
+    domain = suggestion;
+    showSuggestions = false;
+  }
+
+  function handleDomainInput() {
+    clearFieldError('domain');
+    showSuggestions = domainFocused && getDomainSuggestions().length > 0;
+  }
+
+  function handleDomainFocus() {
+    domainFocused = true;
+    if (domain.trim() && !domain.includes('.')) {
+      showSuggestions = getDomainSuggestions().length > 0;
+    }
+  }
+
+  function handleDomainBlur() {
+    // Delay to allow click on suggestion
+    setTimeout(() => {
+      domainFocused = false;
+      showSuggestions = false;
+      validateOnBlur('domain', domain.trim());
+    }, 150);
+  }
+
+  // --- Template logic ---
+  function getSelectedTemplateObj() {
+    return getTemplates().find(t => t.slug === selectedTemplate);
+  }
+
+  const noUpstreamTemplates = new Set(['static', 'custom']);
+
+  function needsUpstream() {
+    return !noUpstreamTemplates.has(selectedTemplate);
+  }
+
+  function onTemplateChange() {
+    templateParams = {};
+    const tpl = getSelectedTemplateObj();
+    if (tpl?.params) {
+      tpl.params.forEach(p => { templateParams[p.key] = ''; });
+    }
+  }
+
+  async function pickDirectory(paramKey) {
+    try {
+      const dir = await PickDirectory('Select directory');
+      if (dir) {
+        templateParams = { ...templateParams, [paramKey]: dir };
+      }
+    } catch (e) {
+      // User cancelled
+    }
+  }
+
+  // --- Validation ---
   function clearFieldError(field) {
     if (fieldErrors[field]) {
       fieldErrors = { ...fieldErrors, [field]: undefined };
@@ -107,7 +174,7 @@
   }
 
   function validateOnBlur(field, value) {
-    const err = validateField(field, value, !!selectedTemplate);
+    const err = validateField(field, value, !needsUpstream());
     if (err) {
       fieldErrors = { ...fieldErrors, [field]: err };
     } else {
@@ -120,13 +187,50 @@
     validateOnBlur('upstream', upstream);
   }
 
+  // --- Build & Submit ---
+  function buildRequest() {
+    const req = {
+      domain: domain.trim(),
+      upstream: needsUpstream() ? upstream.trim() : '',
+      tls: true,
+      description: description.trim(),
+    };
+
+    const templateIsNew = !isEdit || selectedTemplate !== originalTemplate;
+    if (selectedTemplate && selectedTemplate !== 'simple' && templateIsNew) {
+      // Only send template on create or when switching templates.
+      // On edit with the same template, the config is already stored.
+      req.template = selectedTemplate;
+      req.templateParams = { ...templateParams };
+    }
+
+    const filteredPaths = pathRules.filter(p => p.trim());
+    if (filteredPaths.length > 0) {
+      req.matchConfig = { path: filteredPaths };
+    }
+
+    const hc = {};
+    let hasHandler = false;
+    if (corsEnabled) { hc.cors = { allowOrigin: corsAllowOrigin.trim() || '*' }; hasHandler = true; }
+    if (compressionEnabled) { hc.compression = { encodings: ['gzip', 'zstd'] }; hasHandler = true; }
+    if (stripPathPrefix.trim()) { hc.stripPathPrefix = stripPathPrefix.trim(); hasHandler = true; }
+    const filteredHeaders = customHeaders.filter(h => h.key.trim());
+    if (filteredHeaders.length > 0) {
+      hc.responseHeaders = filteredHeaders.map(h => ({ key: h.key.trim(), value: h.value.trim() }));
+      hasHandler = true;
+    }
+    if (hasHandler) req.handlerConfig = hc;
+
+    return req;
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     fieldErrors = {};
     error = '';
 
-    const useTemplate = !!selectedTemplate;
-    const { valid, data: validatedData, errors } = validateRoute(
+    const useTemplate = !needsUpstream();
+    const { valid, errors } = validateRoute(
       { domain: domain.trim(), upstream: upstream.trim(), description: description.trim() },
       useTemplate
     );
@@ -134,11 +238,6 @@
     if (!valid) {
       fieldErrors = errors;
       return;
-    }
-
-    // Apply normalized upstream from validation (protocol stripped)
-    if (validatedData.upstream) {
-      upstream = validatedData.upstream;
     }
 
     saving = true;
@@ -157,37 +256,6 @@
     }
   }
 
-  function selectTemplate(tpl) {
-    selectedTemplate = tpl.slug;
-    templateParams = {};
-    (tpl.params || []).forEach(p => {
-      templateParams[p.key] = '';
-    });
-    showTemplatePicker = false;
-  }
-
-  function clearTemplate() {
-    selectedTemplate = '';
-    templateParams = {};
-    showTemplatePicker = false;
-  }
-
-  function addPathRule() {
-    pathRules = [...pathRules, ''];
-  }
-
-  function removePathRule(index) {
-    pathRules = pathRules.filter((_, i) => i !== index);
-  }
-
-  function addHeader() {
-    customHeaders = [...customHeaders, { key: '', value: '' }];
-  }
-
-  function removeHeader(index) {
-    customHeaders = customHeaders.filter((_, i) => i !== index);
-  }
-
   async function handlePreview() {
     try {
       const req = buildRequest();
@@ -200,9 +268,10 @@
     }
   }
 
-  function getSelectedTemplateObj() {
-    return getTemplates().find(t => t.slug === selectedTemplate);
-  }
+  function addPathRule() { pathRules = [...pathRules, '']; }
+  function removePathRule(i) { pathRules = pathRules.filter((_, idx) => idx !== i); }
+  function addHeader() { customHeaders = [...customHeaders, { key: '', value: '' }]; }
+  function removeHeader(i) { customHeaders = customHeaders.filter((_, idx) => idx !== i); }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -211,68 +280,87 @@
   <div class="modal" onclick={(e) => e.stopPropagation()}>
     <h2>{isEdit ? 'Edit Route' : 'Add Route'}</h2>
     <form onsubmit={handleSubmit}>
-      <label class="field">
+
+      <!-- Domain with autocomplete -->
+      <div class="field domain-field">
         <span class="label">Domain</span>
-        <input type="text" bind:value={domain} placeholder="myapp.test" class:has-error={fieldErrors.domain} oninput={() => clearFieldError('domain')} onblur={() => validateOnBlur('domain', domain.trim())} />
-        {#if fieldErrors.domain}<span class="field-error">{fieldErrors.domain}</span>{/if}
-      </label>
-
-      <label class="field">
-        <span class="label">Upstream</span>
-        <input type="text" bind:value={upstream} placeholder="localhost:3000" class:has-error={fieldErrors.upstream} oninput={() => clearFieldError('upstream')} onblur={handleUpstreamBlur} />
-        {#if fieldErrors.upstream}<span class="field-error">{fieldErrors.upstream}</span>{/if}
-      </label>
-
-      <label class="field">
-        <span class="label">Description</span>
-        <input type="text" bind:value={description} placeholder="Short description of this route" />
-      </label>
-
-      <!-- Template section -->
-      {#if selectedTemplate}
-        {@const tplObj = getSelectedTemplateObj()}
-        <div class="template-selected">
-          <div class="template-selected-header">
-            <span class="template-badge">{tplObj?.name ?? selectedTemplate}</span>
-            <button type="button" class="btn btn-ghost btn-xs" onclick={clearTemplate}>Clear</button>
-          </div>
-          {#if tplObj?.params?.length}
-            <div class="template-params">
-              {#each tplObj.params as param}
-                <label class="field">
-                  <span class="label">{param.label}{#if param.required} *{/if}</span>
-                  <input
-                    type="text"
-                    bind:value={templateParams[param.key]}
-                    placeholder={param.placeholder ?? ''}
-                  />
-                </label>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {:else if showTemplatePicker}
-        <div class="template-picker">
-          <div class="template-picker-header">
-            <span class="label">Choose a Template</span>
-            <button type="button" class="btn btn-ghost btn-xs" onclick={() => showTemplatePicker = false}>Cancel</button>
-          </div>
-          <div class="template-grid">
-            {#each getTemplates() as tpl}
-              <button type="button" class="template-card" onclick={() => selectTemplate(tpl)}>
-                <span class="template-card-name">{tpl.name}</span>
-                <span class="template-card-desc">{tpl.description}</span>
+        <input
+          type="text"
+          bind:value={domain}
+          placeholder="myapp"
+          class:has-error={fieldErrors.domain}
+          oninput={handleDomainInput}
+          onfocus={handleDomainFocus}
+          onblur={handleDomainBlur}
+        />
+        {#if showSuggestions}
+          <div class="suggestions">
+            {#each getDomainSuggestions() as suggestion}
+              <button type="button" class="suggestion" onmousedown={() => selectSuggestion(suggestion)}>
+                {suggestion}
               </button>
             {/each}
-            {#if getTemplates().length === 0}
-              <div class="empty-templates">No templates available.</div>
-            {/if}
           </div>
+        {/if}
+        {#if fieldErrors.domain}<span class="field-error">{fieldErrors.domain}</span>{/if}
+      </div>
+
+      <!-- Description -->
+      <label class="field">
+        <span class="label">Description</span>
+        <input type="text" bind:value={description} placeholder="What this route is for" />
+      </label>
+
+      <!-- Template type selector -->
+      <div class="field">
+        <span class="label">Type</span>
+        <div class="template-selector">
+          {#each getTemplates() as tpl}
+            <button
+              type="button"
+              class="template-chip"
+              class:active={selectedTemplate === tpl.slug}
+              onclick={() => { selectedTemplate = tpl.slug; onTemplateChange(); }}
+            >
+              {tpl.name}
+            </button>
+          {/each}
         </div>
-      {:else}
-        <button type="button" class="btn btn-ghost btn-sm use-template-btn" onclick={() => showTemplatePicker = true}>
-          Use Template
-        </button>
+      </div>
+
+      <!-- Template-specific fields -->
+      {#if needsUpstream()}
+        <label class="field">
+          <span class="label">Upstream</span>
+          <input type="text" bind:value={upstream} placeholder="localhost:3000" class:has-error={fieldErrors.upstream} oninput={() => clearFieldError('upstream')} onblur={handleUpstreamBlur} />
+          {#if fieldErrors.upstream}<span class="field-error">{fieldErrors.upstream}</span>{/if}
+        </label>
+      {/if}
+
+      {#if getSelectedTemplateObj()?.params?.length}
+        <div class="template-params">
+          {#each getSelectedTemplateObj().params as param}
+            <label class="field">
+              <span class="label">{param.label}{#if param.required} *{/if}</span>
+              {#if param.key === 'root'}
+                <div class="input-with-button">
+                  <input type="text" bind:value={templateParams[param.key]} placeholder={param.placeholder ?? ''} />
+                  <button type="button" class="btn btn-sm" onclick={() => pickDirectory(param.key)}>Browse</button>
+                </div>
+              {:else if param.key === 'handlerJson' || param.key === 'matchJson'}
+                <textarea
+                  class="json-editor"
+                  bind:value={templateParams[param.key]}
+                  placeholder={param.placeholder ?? ''}
+                  rows="4"
+                  spellcheck="false"
+                ></textarea>
+              {:else}
+                <input type="text" bind:value={templateParams[param.key]} placeholder={param.placeholder ?? ''} />
+              {/if}
+            </label>
+          {/each}
+        </div>
       {/if}
 
       <!-- Advanced options -->
@@ -282,7 +370,6 @@
         </button>
         {#if showAdvanced}
           <div class="advanced-body">
-            <!-- Path rules -->
             <div class="advanced-group">
               <span class="label">Path Rules</span>
               {#each pathRules as _rule, i}
@@ -293,8 +380,6 @@
               {/each}
               <button type="button" class="btn btn-ghost btn-xs" onclick={addPathRule}>+ Add path</button>
             </div>
-
-            <!-- CORS -->
             <div class="advanced-group">
               <label class="field checkbox-field">
                 <input type="checkbox" bind:checked={corsEnabled} />
@@ -307,24 +392,18 @@
                 </label>
               {/if}
             </div>
-
-            <!-- Compression -->
             <div class="advanced-group">
               <label class="field checkbox-field">
                 <input type="checkbox" bind:checked={compressionEnabled} />
                 <span>Enable Compression (gzip + zstd)</span>
               </label>
             </div>
-
-            <!-- Strip path prefix -->
             <div class="advanced-group">
               <label class="field">
                 <span class="label">Strip Path Prefix</span>
                 <input type="text" bind:value={stripPathPrefix} placeholder="/api" />
               </label>
             </div>
-
-            <!-- Custom response headers -->
             <div class="advanced-group">
               <span class="label">Custom Response Headers</span>
               {#each customHeaders as _header, i}
@@ -344,7 +423,6 @@
         <div class="error">{error}</div>
       {/if}
 
-      <!-- Preview -->
       {#if showPreview}
         <div class="preview-section">
           <div class="preview-header">
@@ -448,87 +526,102 @@
     gap: 8px;
   }
 
-  /* Template picker */
-  .use-template-btn {
-    margin-bottom: 12px;
-    color: var(--accent);
+  /* Domain autocomplete */
+  .domain-field {
+    position: relative;
   }
-  .template-picker {
-    margin-bottom: 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 12px;
-    background: var(--bg-tertiary);
-  }
-  .template-picker-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 10px;
-  }
-  .template-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-  }
-  .template-card {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+  .suggestions {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
     background: var(--bg-card);
-    cursor: pointer;
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    max-height: 150px;
+    overflow-y: auto;
+  }
+  .suggestion {
+    display: block;
+    width: 100%;
+    padding: 7px 10px;
+    border: none;
+    background: none;
     text-align: left;
-    transition: border-color 0.15s;
-  }
-  .template-card:hover {
-    border-color: var(--accent);
-  }
-  .template-card-name {
     font-size: 12px;
-    font-weight: 600;
     color: var(--text-primary);
+    cursor: pointer;
+    font-family: var(--font-mono);
   }
-  .template-card-desc {
-    font-size: 10px;
-    color: var(--text-muted);
-    line-height: 1.3;
-  }
-  .empty-templates {
-    grid-column: 1 / -1;
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 11px;
-    padding: 12px;
+  .suggestion:hover {
+    background: var(--bg-hover);
   }
 
-  /* Template selected */
-  .template-selected {
-    margin-bottom: 12px;
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
-    padding: 12px;
-    background: var(--bg-tertiary);
-  }
-  .template-selected-header {
+  /* Template selector chips */
+  .template-selector {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
+    flex-wrap: wrap;
+    gap: 6px;
   }
-  .template-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 3px;
+  .template-chip {
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: transparent;
+    color: var(--text-secondary);
     font-size: 11px;
-    font-weight: 600;
-    background: rgba(10, 132, 255, 0.15);
-    color: var(--accent);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: var(--font-sans);
   }
+  .template-chip:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+  }
+  .template-chip.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  /* Template params */
   .template-params {
-    padding-top: 4px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    margin-bottom: 12px;
+  }
+  .template-params .field:last-child {
+    margin-bottom: 0;
+  }
+  .input-with-button {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .input-with-button input {
+    flex: 1;
+  }
+  .json-editor {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    outline: none;
+    resize: vertical;
+    min-height: 60px;
+    line-height: 1.4;
+  }
+  .json-editor:focus {
+    border-color: var(--accent);
   }
 
   /* Advanced section */
@@ -613,7 +706,6 @@
     line-height: 1.4;
   }
 
-  /* Field validation errors */
   .field-error {
     font-size: 11px;
     color: var(--danger);
@@ -622,8 +714,6 @@
   .has-error {
     border-color: var(--danger) !important;
   }
-
-  /* Utility */
   .btn-xs {
     font-size: 10px;
     padding: 2px 6px;

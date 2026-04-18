@@ -79,6 +79,7 @@ func main() {
 	agentSvc := api.NewAgentService(convoStore)
 	metricsSvc := api.NewMetricsService(c)
 	logsSvc := api.NewLogsService(c)
+	dialogSvc := api.NewDialogService()
 
 	err = wails.Run(&options.App{
 		Title:  "Valet",
@@ -98,6 +99,7 @@ func main() {
 			agentSvc.SetContext(ctx)
 			metricsSvc.SetContext(ctx)
 			logsSvc.SetContext(ctx)
+			dialogSvc.SetContext(ctx)
 		},
 		Bind: []interface{}{
 			statusSvc,
@@ -108,6 +110,7 @@ func main() {
 			agentSvc,
 			metricsSvc,
 			logsSvc,
+			dialogSvc,
 		},
 	})
 

@@ -39,10 +39,12 @@ func (t *TemplateDef) Apply(params map[string]string) (matchConfig, handlerConfi
 // Registry holds all available route templates.
 var Registry = []TemplateDef{
 	templateSimple(),
+	templateStatic(),
 	templateSPAAPI(),
 	templateWebsocket(),
 	templateCORSProxy(),
 	templateMultiUpstream(),
+	templateCustom(),
 }
 
 // Get returns the template with the given slug, or nil if not found.
@@ -71,6 +73,35 @@ func templateSimple() TemplateDef {
 		Params:      nil,
 		apply: func(params map[string]string) (string, string, error) {
 			return "", "", nil
+		},
+	}
+}
+
+func templateStatic() TemplateDef {
+	return TemplateDef{
+		Slug:        "static",
+		Name:        "Static File Server",
+		Description: "Serves files from a local directory over HTTPS. Useful for documentation, built frontends, or any static content.",
+		Params: []Param{
+			{Key: "root", Label: "Directory", Placeholder: "/Users/you/project/dist", Required: true},
+			{Key: "browse", Label: "Enable directory browsing", Placeholder: "false", Required: false},
+		},
+		apply: func(params map[string]string) (string, string, error) {
+			root := params["root"]
+			if root == "" {
+				return "", "", fmt.Errorf("root directory is required")
+			}
+
+			fileServer := map[string]any{
+				"handler": "file_server",
+				"root":    root,
+			}
+			if params["browse"] == "true" {
+				fileServer["browse"] = map[string]any{}
+			}
+
+			handler := []map[string]any{fileServer}
+			return "", mustMarshal(handler), nil
 		},
 	}
 }
@@ -227,6 +258,34 @@ func templateMultiUpstream() TemplateDef {
 			}
 
 			return "", mustMarshal(handler), nil
+		},
+	}
+}
+
+func templateCustom() TemplateDef {
+	return TemplateDef{
+		Slug:        "custom",
+		Name:        "Custom Caddy JSON",
+		Description: "Paste raw Caddy handler JSON for advanced configurations. Useful for AI-generated configs via MCP.",
+		Params: []Param{
+			{Key: "handlerJson", Label: "Handler Config (JSON)", Placeholder: `[{"handler":"reverse_proxy","upstreams":[{"dial":"localhost:3000"}]}]`, Required: true},
+			{Key: "matchJson", Label: "Match Config (JSON)", Placeholder: `[{"host":["myapp.test"]}]`, Required: false},
+		},
+		apply: func(params map[string]string) (string, string, error) {
+			handlerJSON := strings.TrimSpace(params["handlerJson"])
+			if handlerJSON == "" {
+				return "", "", fmt.Errorf("handler JSON is required")
+			}
+			if !json.Valid([]byte(handlerJSON)) {
+				return "", "", fmt.Errorf("handler config is not valid JSON")
+			}
+
+			matchJSON := strings.TrimSpace(params["matchJson"])
+			if matchJSON != "" && !json.Valid([]byte(matchJSON)) {
+				return "", "", fmt.Errorf("match config is not valid JSON")
+			}
+
+			return matchJSON, handlerJSON, nil
 		},
 	}
 }
