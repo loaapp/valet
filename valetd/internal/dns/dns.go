@@ -13,12 +13,14 @@ import (
 	"github.com/loaapp/valet/valetd/internal/logstore"
 )
 
+const fallbackUpstream = "8.8.8.8:53"
+
 // Server is an embedded DNS server that resolves known route domains to 127.0.0.1
-// and forwards all other queries to upstream DNS.
+// and forwards all other queries to the system's upstream DNS.
 type Server struct {
 	mu      sync.RWMutex
 	domains map[string]bool   // exact domains with routes (always → 127.0.0.1)
-	entries map[string]string  // dns_entries: domain → target (IP or hostname)
+	entries map[string]string // dns_entries: domain → target (IP or hostname)
 	tlds    map[string]bool   // managed TLDs for wildcard resolution
 
 	logStore  *logstore.Store
@@ -215,14 +217,56 @@ func (s *Server) shouldResolveLocally(name string) bool {
 	return s.getTarget(clean) != ""
 }
 
+// getSystemUpstreams reads the system's DNS servers from /etc/resolv.conf.
+// Re-read on every call so VPN connect/disconnect is picked up immediately.
+// Filters out 127.0.0.1 to avoid forwarding to ourselves.
+func getSystemUpstreams() []string {
+	config, err := mdns.ClientConfigFromFile("/etc/resolv.conf")
+	if err != nil {
+		return nil
+	}
+	var upstreams []string
+	for _, srv := range config.Servers {
+		if srv == "127.0.0.1" || srv == "::1" {
+			continue // skip loopback to avoid forwarding to ourselves
+		}
+		port := config.Port
+		if port == "" {
+			port = "53"
+		}
+		upstreams = append(upstreams, net.JoinHostPort(srv, port))
+	}
+	return upstreams
+}
+
 // forwardAndLog forwards a query and logs the result. Returns non-empty if response was sent.
 func (s *Server) forwardAndLog(w mdns.ResponseWriter, r *mdns.Msg, domain, qtype string) string {
-	upstream := "8.8.8.8:53"
+	upstreams := getSystemUpstreams()
+	if len(upstreams) == 0 {
+		upstreams = []string{fallbackUpstream}
+	}
 
 	client := new(mdns.Client)
-	resp, _, err := client.Exchange(r, upstream)
-	if err != nil {
-		log.Printf("DNS forward error: %v", err)
+	client.Timeout = 3 * time.Second
+
+	// Try each upstream until one succeeds.
+	var resp *mdns.Msg
+	var lastErr error
+	for _, upstream := range upstreams {
+		var err error
+		resp, _, err = client.Exchange(r, upstream)
+		if err == nil {
+			break
+		}
+		lastErr = err
+	}
+
+	if resp == nil {
+		errMsg := "all upstreams failed"
+		if lastErr != nil {
+			errMsg = lastErr.Error()
+		}
+		log.Printf("DNS forward error for %s: %s (tried %v)", domain, errMsg, upstreams)
 		m := new(mdns.Msg)
 		m.SetRcode(r, mdns.RcodeServerFailure)
 		w.WriteMsg(m)
@@ -232,7 +276,7 @@ func (s *Server) forwardAndLog(w mdns.ResponseWriter, r *mdns.Msg, domain, qtype
 				Domain:    domain,
 				Type:      qtype,
 				Action:    "forwarded",
-				Result:    "error: " + err.Error(),
+				Result:    "error: " + errMsg,
 			})
 		}
 		return "sent"

@@ -1,6 +1,9 @@
 package dns
 
-import "testing"
+import (
+	"net"
+	"testing"
+)
 
 func TestGetTarget_EntryPriority(t *testing.T) {
 	s := NewServer()
@@ -119,6 +122,27 @@ func TestSetTLDs_StripsDot(t *testing.T) {
 	target := s.getTarget("myapp.test")
 	if target != "127.0.0.1" {
 		t.Errorf("TLD with leading dot: getTarget = %q, want %q", target, "127.0.0.1")
+	}
+}
+
+func TestGetSystemUpstreams(t *testing.T) {
+	upstreams := getSystemUpstreams()
+
+	// Should return at least one upstream on any system with /etc/resolv.conf
+	if len(upstreams) == 0 {
+		t.Skip("no system upstreams found (no /etc/resolv.conf?)")
+	}
+
+	for _, u := range upstreams {
+		// Should not include loopback (we filter it out)
+		host, _, err := net.SplitHostPort(u)
+		if err != nil {
+			t.Errorf("invalid upstream %q: %v", u, err)
+			continue
+		}
+		if host == "127.0.0.1" || host == "::1" {
+			t.Errorf("upstream %q is loopback — should be filtered", u)
+		}
 	}
 }
 
