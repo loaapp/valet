@@ -245,7 +245,7 @@ func TestUpdate_UpstreamChange_ClearsHandler(t *testing.T) {
 	})
 
 	// Simulate a custom handler config being set
-	db.UpdateRoute(testDB2(t, svc), route.ID, "myapp.test", "localhost:3000", true, "", "",
+	db.UpdateRoute(testDB2(t, svc), route.ID, "myapp.test", "localhost:3000", true, false, "", "",
 		"", `[{"handler":"custom"}]`, "", "")
 
 	newUpstream := "localhost:4000"
@@ -304,7 +304,7 @@ func TestSync_CertFailure_StopsBefore_CaddyReload(t *testing.T) {
 	cm.generateErr = fmt.Errorf("mkcert failed")
 
 	// Add route directly to DB (bypass Add which calls Sync)
-	db.CreateRoute(svc.db, "myapp.test", "localhost:3000", true, "", "", "", "", "", "")
+	db.CreateRoute(svc.db, "myapp.test", "localhost:3000", true, false, "", "", "", "", "", "")
 
 	err := svc.Sync()
 	if err == nil {
@@ -319,7 +319,7 @@ func TestSync_CaddyFailure_StopsBefore_DNSUpdate(t *testing.T) {
 	svc, _, ca, dn, _ := newTestService(t)
 	ca.reloadErr = fmt.Errorf("caddy config invalid")
 
-	db.CreateRoute(svc.db, "myapp.test", "localhost:3000", true, "", "", "", "", "", "")
+	db.CreateRoute(svc.db, "myapp.test", "localhost:3000", true, false, "", "", "", "", "", "")
 
 	err := svc.Sync()
 	if err == nil {
@@ -335,7 +335,7 @@ func TestSync_HostsFailure_ReturnsError(t *testing.T) {
 	ho.syncErr = fmt.Errorf("permission denied")
 
 	// Add a route with a TLD that has no resolver (so it goes to hosts)
-	db.CreateRoute(svc.db, "myapp.custom", "localhost:3000", true, "", "", "", "", "", "")
+	db.CreateRoute(svc.db, "myapp.custom", "localhost:3000", true, false, "", "", "", "", "", "")
 
 	err := svc.Sync()
 	if err == nil {
@@ -346,8 +346,8 @@ func TestSync_HostsFailure_ReturnsError(t *testing.T) {
 func TestSync_MultipleRoutes_AllSynced(t *testing.T) {
 	svc, _, ca, dn, _ := newTestService(t)
 
-	db.CreateRoute(svc.db, "app1.test", "localhost:3000", true, "", "", "", "", "", "")
-	db.CreateRoute(svc.db, "app2.test", "localhost:4000", true, "", "", "", "", "", "")
+	db.CreateRoute(svc.db, "app1.test", "localhost:3000", true, false, "", "", "", "", "", "")
+	db.CreateRoute(svc.db, "app2.test", "localhost:4000", true, false, "", "", "", "", "", "")
 
 	err := svc.Sync()
 	if err != nil {
@@ -384,9 +384,9 @@ func TestSync_HostsFallback_OnlyUnmanagedTLDs(t *testing.T) {
 	svc := NewRouteService(database, cm, ca, dn, ho, re, "/tmp")
 
 	// Route on managed TLD — should NOT go to hosts
-	db.CreateRoute(svc.db, "myapp.test", "localhost:3000", true, "", "", "", "", "", "")
+	db.CreateRoute(svc.db, "myapp.test", "localhost:3000", true, false, "", "", "", "", "", "")
 	// Route on unmanaged TLD — SHOULD go to hosts
-	db.CreateRoute(svc.db, "myapp.custom", "localhost:4000", true, "", "", "", "", "", "")
+	db.CreateRoute(svc.db, "myapp.custom", "localhost:4000", true, false, "", "", "", "", "", "")
 
 	svc.Sync()
 

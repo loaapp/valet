@@ -124,14 +124,21 @@ func buildRouteHandler(r db.Route) map[string]any {
 		}
 	}
 	if handlers == nil {
-		handlers = []map[string]any{
-			{
-				"handler": "reverse_proxy",
-				"upstreams": []map[string]any{
-					{"dial": r.Upstream},
-				},
+		rp := map[string]any{
+			"handler": "reverse_proxy",
+			"upstreams": []map[string]any{
+				{"dial": r.Upstream},
 			},
 		}
+		if r.TLSUpstream {
+			rp["transport"] = map[string]any{
+				"protocol": "http",
+				"tls": map[string]any{
+					"insecure_skip_verify": true,
+				},
+			}
+		}
+		handlers = []map[string]any{rp}
 	}
 
 	route := map[string]any{

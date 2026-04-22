@@ -6,6 +6,11 @@
   let tab = $state('http');
   let autoScroll = $state(true);
   let tableBody;
+  let expandedRow = $state(null);
+
+  function toggleExpand(i) {
+    expandedRow = expandedRow === i ? null : i;
+  }
 
   function formatTime(ts) {
     if (!ts) return '--:--:--';
@@ -95,8 +100,8 @@
           </tr>
         </thead>
         <tbody>
-          {#each getLogs() as entry}
-            <tr>
+          {#each getLogs() as entry, i}
+            <tr class:has-error={entry.error} class:clickable={entry.error} onclick={() => entry.error && toggleExpand(i)}>
               <td class="col-time mono">{formatTime(entry.ts)}</td>
               <td class="col-method"><span class="method-badge {methodClass(entry.method)}">{entry.method ?? '--'}</span></td>
               <td class="col-host">{entry.host ?? '--'}</td>
@@ -104,6 +109,16 @@
               <td class="col-status {statusClass(entry.status)}">{entry.status ?? '--'}</td>
               <td class="col-duration mono">{entry.duration != null ? Math.round(entry.duration * 1000) + 'ms' : '--'}</td>
             </tr>
+            {#if entry.error && expandedRow === i}
+              <tr class="error-detail-row">
+                <td colspan="6">
+                  <div class="error-detail">
+                    {#if entry.upstream}<span class="detail-label">Upstream:</span> <span class="mono">{entry.upstream}</span><br/>{/if}
+                    <span class="detail-label">Error:</span> <span class="mono error-text">{entry.error}</span>
+                  </div>
+                </td>
+              </tr>
+            {/if}
           {/each}
           {#if getLogs().length === 0}
             <tr><td colspan="6" class="empty">No HTTP log entries yet</td></tr>
@@ -253,6 +268,35 @@
   .status-2xx { color: #34C759; }
   .status-4xx { color: #FF9F0A; }
   .status-5xx { color: #FF453A; }
+  .has-error td {
+    color: var(--danger) !important;
+  }
+  .clickable {
+    cursor: pointer;
+  }
+  .clickable:hover td {
+    background: var(--bg-hover);
+  }
+  .error-detail-row td {
+    padding: 0 !important;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .error-detail {
+    padding: 8px 10px;
+    background: rgba(255,69,58,0.05);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+  .detail-label {
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+  .error-text {
+    color: var(--danger);
+  }
   .empty {
     text-align: center;
     padding: 40px 10px !important;

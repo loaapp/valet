@@ -8,6 +8,7 @@ type AddRouteRequest struct {
 	TemplateParams map[string]string `json:"templateParams"`
 	MatchConfig    string            `json:"matchConfig"`
 	HandlerConfig  string            `json:"handlerConfig"`
+	TLSUpstream    bool              `json:"tlsUpstream"`
 }
 
 type UpdateRouteRequest struct {
@@ -17,6 +18,7 @@ type UpdateRouteRequest struct {
 	MatchConfig   *string `json:"matchConfig"`
 	HandlerConfig *string `json:"handlerConfig"`
 	Template      *string `json:"template"`
+	TLSUpstream   *bool   `json:"tlsUpstream"`
 }
 
 type DiagnosticCheck struct {

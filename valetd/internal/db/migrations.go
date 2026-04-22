@@ -69,6 +69,9 @@ var migrations = []struct {
 	)`},
 	{13, `CREATE INDEX IF NOT EXISTS idx_http_logs_ts ON http_logs(ts)`},
 	{14, `CREATE INDEX IF NOT EXISTS idx_dns_logs_ts ON dns_logs(ts)`},
+	{15, `ALTER TABLE http_logs ADD COLUMN upstream TEXT NOT NULL DEFAULT ''`},
+	{16, `ALTER TABLE http_logs ADD COLUMN error TEXT NOT NULL DEFAULT ''`},
+	{17, `ALTER TABLE routes ADD COLUMN tls_upstream BOOLEAN NOT NULL DEFAULT 0`},
 }
 
 func Migrate(db *sql.DB) error {

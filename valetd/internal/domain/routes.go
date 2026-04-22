@@ -66,7 +66,7 @@ func (s *RouteService) Add(req AddRouteRequest) (*db.Route, error) {
 	}
 
 	// Create (TLS always true)
-	route, err := db.CreateRoute(s.db, domain, upstream, true, "", "",
+	route, err := db.CreateRoute(s.db, domain, upstream, true, req.TLSUpstream, "", "",
 		req.MatchConfig, req.HandlerConfig, req.Template, req.Description)
 	if err != nil {
 		return nil, err
@@ -126,6 +126,11 @@ func (s *RouteService) Update(id string, req UpdateRouteRequest) (*db.Route, err
 		handlerConfig = ""
 	}
 
+	tlsUpstream := existing.TLSUpstream
+	if req.TLSUpstream != nil {
+		tlsUpstream = *req.TLSUpstream
+	}
+
 	tmpl := existing.Template
 	if req.Template != nil {
 		tmpl = *req.Template
@@ -142,7 +147,7 @@ func (s *RouteService) Update(id string, req UpdateRouteRequest) (*db.Route, err
 		}
 	}
 
-	route, err := db.UpdateRoute(s.db, id, domain, upstream, true,
+	route, err := db.UpdateRoute(s.db, id, domain, upstream, true, tlsUpstream,
 		existing.CertPath, existing.KeyPath, matchConfig, handlerConfig, tmpl, description)
 	if err != nil {
 		return nil, err

@@ -5,6 +5,7 @@ type Route struct {
 	Domain        string `json:"domain"`
 	Upstream      string `json:"upstream"`
 	TLSEnabled    bool   `json:"tlsEnabled"`
+	TLSUpstream   bool   `json:"tlsUpstream"`
 	CertPath      string `json:"certPath"`
 	KeyPath       string `json:"keyPath"`
 	MatchConfig   string `json:"matchConfig"`

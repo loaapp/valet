@@ -7,11 +7,11 @@ import (
 	"github.com/google/uuid"
 )
 
-const routeCols = `id, domain, upstream, tls_enabled, cert_path, key_path, match_config, handler_config, template, description, created_at, updated_at`
+const routeCols = `id, domain, upstream, tls_enabled, tls_upstream, cert_path, key_path, match_config, handler_config, template, description, created_at, updated_at`
 
 func scanRoute(scanner interface{ Scan(...any) error }) (*Route, error) {
 	var r Route
-	err := scanner.Scan(&r.ID, &r.Domain, &r.Upstream, &r.TLSEnabled, &r.CertPath, &r.KeyPath,
+	err := scanner.Scan(&r.ID, &r.Domain, &r.Upstream, &r.TLSEnabled, &r.TLSUpstream, &r.CertPath, &r.KeyPath,
 		&r.MatchConfig, &r.HandlerConfig, &r.Template, &r.Description, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -53,11 +53,11 @@ func GetRouteByDomain(db *sql.DB, domain string) (*Route, error) {
 	return r, err
 }
 
-func CreateRoute(db *sql.DB, domain, upstream string, tlsEnabled bool, certPath, keyPath, matchConfig, handlerConfig, template, description string) (*Route, error) {
+func CreateRoute(db *sql.DB, domain, upstream string, tlsEnabled, tlsUpstream bool, certPath, keyPath, matchConfig, handlerConfig, template, description string) (*Route, error) {
 	id := uuid.New().String()
 	_, err := db.Exec(
-		`INSERT INTO routes (id, domain, upstream, tls_enabled, cert_path, key_path, match_config, handler_config, template, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, domain, upstream, tlsEnabled, certPath, keyPath, matchConfig, handlerConfig, template, description,
+		`INSERT INTO routes (id, domain, upstream, tls_enabled, tls_upstream, cert_path, key_path, match_config, handler_config, template, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, domain, upstream, tlsEnabled, tlsUpstream, certPath, keyPath, matchConfig, handlerConfig, template, description,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert route: %w", err)
@@ -65,10 +65,10 @@ func CreateRoute(db *sql.DB, domain, upstream string, tlsEnabled bool, certPath,
 	return GetRoute(db, id)
 }
 
-func UpdateRoute(db *sql.DB, id, domain, upstream string, tlsEnabled bool, certPath, keyPath, matchConfig, handlerConfig, template, description string) (*Route, error) {
+func UpdateRoute(db *sql.DB, id, domain, upstream string, tlsEnabled, tlsUpstream bool, certPath, keyPath, matchConfig, handlerConfig, template, description string) (*Route, error) {
 	_, err := db.Exec(
-		`UPDATE routes SET domain = ?, upstream = ?, tls_enabled = ?, cert_path = ?, key_path = ?, match_config = ?, handler_config = ?, template = ?, description = ?, updated_at = datetime('now') WHERE id = ?`,
-		domain, upstream, tlsEnabled, certPath, keyPath, matchConfig, handlerConfig, template, description, id,
+		`UPDATE routes SET domain = ?, upstream = ?, tls_enabled = ?, tls_upstream = ?, cert_path = ?, key_path = ?, match_config = ?, handler_config = ?, template = ?, description = ?, updated_at = datetime('now') WHERE id = ?`,
+		domain, upstream, tlsEnabled, tlsUpstream, certPath, keyPath, matchConfig, handlerConfig, template, description, id,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update route: %w", err)

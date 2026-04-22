@@ -49,7 +49,7 @@ func TestRoutes_CRUD(t *testing.T) {
 	}
 
 	// Create
-	r, err := CreateRoute(db, "myapp.test", "localhost:3000", true, "", "", "", "", "", "my app")
+	r, err := CreateRoute(db, "myapp.test", "localhost:3000", true, false, "", "", "", "", "", "my app")
 	if err != nil {
 		t.Fatalf("CreateRoute: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestRoutes_CRUD(t *testing.T) {
 	}
 
 	// Update
-	updated, err := UpdateRoute(db, r.ID, "updated.test", "localhost:4000", true, "/cert", "/key", "", "", "", "updated")
+	updated, err := UpdateRoute(db, r.ID, "updated.test", "localhost:4000", true, false, "/cert", "/key", "", "", "", "updated")
 	if err != nil {
 		t.Fatalf("UpdateRoute: %v", err)
 	}
@@ -130,12 +130,12 @@ func TestRoutes_CRUD(t *testing.T) {
 func TestRoutes_DuplicateDomain(t *testing.T) {
 	db := testDB(t)
 
-	_, err := CreateRoute(db, "myapp.test", "localhost:3000", true, "", "", "", "", "", "")
+	_, err := CreateRoute(db, "myapp.test", "localhost:3000", true, false, "", "", "", "", "", "")
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
 
-	_, err = CreateRoute(db, "myapp.test", "localhost:4000", true, "", "", "", "", "", "")
+	_, err = CreateRoute(db, "myapp.test", "localhost:4000", true, false, "", "", "", "", "", "")
 	if err == nil {
 		t.Error("expected error for duplicate domain, got nil")
 	}

@@ -2,6 +2,7 @@ package logstore
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,8 @@ type HTTPLogEntry struct {
 	Duration   float64 `json:"duration"`
 	Size       int     `json:"size"`
 	RemoteAddr string  `json:"remoteAddr"`
+	Upstream   string  `json:"upstream"`
+	Error      string  `json:"error"`
 }
 
 // DNSLogEntry represents a single DNS query event.
@@ -36,13 +39,15 @@ func New(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+const httpCols = `ts, host, method, uri, status, duration, size, remote_addr, upstream, error`
+
 // PushHTTP inserts an HTTP access log entry.
 func (s *Store) PushHTTP(entry HTTPLogEntry) error {
 	_, err := s.db.Exec(
-		`INSERT INTO http_logs (ts, host, method, uri, status, duration, size, remote_addr)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO http_logs (`+httpCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.Timestamp, entry.Host, entry.Method, entry.URI,
 		entry.Status, entry.Duration, entry.Size, entry.RemoteAddr,
+		entry.Upstream, entry.Error,
 	)
 	return err
 }
@@ -50,39 +55,26 @@ func (s *Store) PushHTTP(entry HTTPLogEntry) error {
 // GetHTTPLogs returns HTTP log entries, newest first up to limit.
 // If since > 0, only entries with ts > since are returned.
 // If route is non-empty, only entries matching that host are returned.
-// Results are returned in chronological order (oldest first).
 func (s *Store) GetHTTPLogs(limit int, since float64, route string) ([]HTTPLogEntry, error) {
-	var rows *sql.Rows
-	var err error
+	query := `SELECT ` + httpCols + ` FROM http_logs`
+	var args []any
+	var clauses []string
 
-	if route != "" && since > 0 {
-		rows, err = s.db.Query(
-			`SELECT ts, host, method, uri, status, duration, size, remote_addr
-			 FROM http_logs WHERE ts > ? AND host = ?
-			 ORDER BY ts DESC LIMIT ?`,
-			since, route, limit,
-		)
-	} else if route != "" {
-		rows, err = s.db.Query(
-			`SELECT ts, host, method, uri, status, duration, size, remote_addr
-			 FROM http_logs WHERE host = ?
-			 ORDER BY ts DESC LIMIT ?`,
-			route, limit,
-		)
-	} else if since > 0 {
-		rows, err = s.db.Query(
-			`SELECT ts, host, method, uri, status, duration, size, remote_addr
-			 FROM http_logs WHERE ts > ?
-			 ORDER BY ts DESC LIMIT ?`,
-			since, limit,
-		)
-	} else {
-		rows, err = s.db.Query(
-			`SELECT ts, host, method, uri, status, duration, size, remote_addr
-			 FROM http_logs ORDER BY ts DESC LIMIT ?`,
-			limit,
-		)
+	if since > 0 {
+		clauses = append(clauses, "ts > ?")
+		args = append(args, since)
 	}
+	if route != "" {
+		clauses = append(clauses, "host = ?")
+		args = append(args, route)
+	}
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY ts DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +84,8 @@ func (s *Store) GetHTTPLogs(limit int, since float64, route string) ([]HTTPLogEn
 	for rows.Next() {
 		var e HTTPLogEntry
 		if err := rows.Scan(&e.Timestamp, &e.Host, &e.Method, &e.URI,
-			&e.Status, &e.Duration, &e.Size, &e.RemoteAddr); err != nil {
+			&e.Status, &e.Duration, &e.Size, &e.RemoteAddr,
+			&e.Upstream, &e.Error); err != nil {
 			return nil, err
 		}
 		entries = append(entries, e)

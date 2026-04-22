@@ -17,6 +17,7 @@ type caddyLogRaw struct {
 	Ts       float64 `json:"ts"`
 	Level    string  `json:"level"`
 	Logger   string  `json:"logger"`
+	Msg      string  `json:"msg"`
 	Status   int     `json:"status"`
 	Duration float64 `json:"duration"`
 	Size     int     `json:"size"`
@@ -26,6 +27,10 @@ type caddyLogRaw struct {
 		URI      string `json:"uri"`
 		RemoteIP string `json:"remote_ip"`
 	} `json:"request"`
+	RespHeaders map[string][]string `json:"resp_headers"`
+	// Caddy logs the upstream address that handled the request
+	// via the X-Upstream header or in the structured log fields.
+	Error string `json:"error"`
 }
 
 // Tailer watches an access log file and pushes parsed entries into a logstore.Store.
@@ -119,6 +124,16 @@ func (t *Tailer) tail(f *os.File) {
 			continue
 		}
 
+		// Extract upstream from Caddy's Server header if present
+		upstream := ""
+		if servers, ok := raw.RespHeaders["Server"]; ok && len(servers) > 0 {
+			upstream = servers[0]
+		}
+		// Also check X-Upstream if we add it later
+		if upstreams, ok := raw.RespHeaders["X-Upstream"]; ok && len(upstreams) > 0 {
+			upstream = upstreams[0]
+		}
+
 		entry := logstore.HTTPLogEntry{
 			Timestamp:  raw.Ts,
 			Host:       raw.Request.Host,
@@ -128,6 +143,8 @@ func (t *Tailer) tail(f *os.File) {
 			Duration:   raw.Duration,
 			Size:       raw.Size,
 			RemoteAddr: raw.Request.RemoteIP,
+			Upstream:   upstream,
+			Error:      raw.Error,
 		}
 		if err := t.store.PushHTTP(entry); err != nil {
 			log.Printf("logbuf: store push error: %v", err)
