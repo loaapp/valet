@@ -14,6 +14,7 @@
   let domain = $state(_route?.domain ?? '');
   let upstream = $state(_route?.upstream ?? '');
   let description = $state(_route?.description ?? '');
+  let tlsUpstream = $state(_route?.tlsUpstream ?? false);
   const originalTemplate = _route?.template || 'simple';
   let selectedTemplate = $state(originalTemplate);
   let templateParams = $state(inferTemplateParams(_route));
@@ -193,6 +194,7 @@
       domain: domain.trim(),
       upstream: needsUpstream() ? upstream.trim() : '',
       tls: true,
+      tlsUpstream,
       description: description.trim(),
     };
 
@@ -334,6 +336,10 @@
           <span class="label">Upstream</span>
           <input type="text" bind:value={upstream} placeholder="localhost:3000" class:has-error={fieldErrors.upstream} oninput={() => clearFieldError('upstream')} onblur={handleUpstreamBlur} />
           {#if fieldErrors.upstream}<span class="field-error">{fieldErrors.upstream}</span>{/if}
+        </label>
+        <label class="field checkbox-field">
+          <input type="checkbox" bind:checked={tlsUpstream} />
+          <span>Backend uses SSL</span>
         </label>
       {/if}
 
