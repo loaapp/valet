@@ -5,6 +5,7 @@ type Route struct {
 	Domain        string `json:"domain"`
 	Upstream      string `json:"upstream"`
 	TLSEnabled    bool   `json:"tlsEnabled"`
+	TLSUpstream   bool   `json:"tlsUpstream"`
 	CertPath      string `json:"certPath"`
 	KeyPath       string `json:"keyPath"`
 	MatchConfig   string `json:"matchConfig"`
@@ -19,6 +20,7 @@ type CreateRouteRequest struct {
 	Domain         string            `json:"domain"`
 	Upstream       string            `json:"upstream"`
 	TLS            *bool             `json:"tls"`
+	TLSUpstream    bool              `json:"tlsUpstream"`
 	Description    string            `json:"description"`
 	Template       string            `json:"template"`
 	TemplateParams map[string]string `json:"templateParams"`

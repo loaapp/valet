@@ -133,6 +133,7 @@ type addRouteRequest struct {
 	Domain         string            `json:"domain"`
 	Upstream       string            `json:"upstream"`
 	TLS            *bool             `json:"tls"`
+	TLSUpstream    bool              `json:"tlsUpstream"`
 	Description    string            `json:"description"`
 	Template       string            `json:"template"`
 	TemplateParams map[string]string `json:"templateParams"`
@@ -155,6 +156,7 @@ func (s *Server) handleAddRoute(w http.ResponseWriter, r *http.Request) {
 		TemplateParams: req.TemplateParams,
 		MatchConfig:    req.MatchConfig,
 		HandlerConfig:  req.HandlerConfig,
+		TLSUpstream:    req.TLSUpstream,
 	}
 
 	route, err := s.routeSvc.Add(domainReq)
@@ -208,6 +210,7 @@ func (s *Server) handleUpdateRoute(w http.ResponseWriter, r *http.Request) {
 	if req.Template != "" {
 		updateReq.Template = &req.Template
 	}
+	updateReq.TLSUpstream = &req.TLSUpstream
 
 	route, err := s.routeSvc.Update(id, updateReq)
 	if err != nil {
